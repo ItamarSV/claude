@@ -6,6 +6,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import { execSync } from 'child_process';
+import { rmSync } from 'fs';
 import path from 'path';
 import pino from 'pino';
 import { Boom } from '@hapi/boom';
@@ -56,17 +57,25 @@ async function connect(onMessage, onReady) {
 
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      if (code === DisconnectReason.loggedOut) {
-        console.error('Logged out. Delete .baileys_auth and restart to re-scan QR.');
-        process.exit(1);
-      }
       if (code === DisconnectReason.connectionReplaced) {
         console.error('Session taken over by another device. Exiting.');
         process.exit(1);
       }
-      const delay = waitingForQrScan ? 60000 : 5000;
-      console.warn(`Connection closed (${code}), reconnecting in ${delay / 1000}s…`);
-      setTimeout(() => connect(onMessage, onReady), delay);
+      // If disconnected during QR phase, clear partial auth so next attempt starts fresh
+      if (waitingForQrScan) {
+        try { rmSync(AUTH_PATH, { recursive: true, force: true }); } catch {}
+        console.warn(`QR phase disconnect (${code}), clearing auth and retrying in 3s…`);
+        setTimeout(() => connect(onMessage, onReady), 3000);
+        return;
+      }
+      if (code === DisconnectReason.loggedOut) {
+        console.error('Logged out. Clearing auth and restarting…');
+        try { rmSync(AUTH_PATH, { recursive: true, force: true }); } catch {}
+        setTimeout(() => connect(onMessage, onReady), 3000);
+        return;
+      }
+      console.warn(`Connection closed (${code}), reconnecting in 5s…`);
+      setTimeout(() => connect(onMessage, onReady), 5000);
     }
   });
 
