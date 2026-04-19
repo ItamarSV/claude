@@ -52,6 +52,10 @@ async function connect(onMessage, onReady) {
         console.error('Logged out. Delete .baileys_auth and restart to re-scan QR.');
         process.exit(1);
       }
+      if (code === DisconnectReason.connectionReplaced) {
+        console.error('Session taken over by another device. Exiting.');
+        process.exit(1);
+      }
       console.warn(`Connection closed (${code}), reconnecting…`);
       connect(onMessage, onReady);
     }
