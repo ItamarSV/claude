@@ -30,6 +30,9 @@ async function connect(onMessage, onReady) {
     logger,
     printQRInTerminal: false,
     browser: ['WhatsApp Assistant', 'Chrome', '1.0.0'],
+    keepAliveIntervalMs: 10000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -59,8 +62,8 @@ async function connect(onMessage, onReady) {
         console.error('Session taken over by another device. Exiting.');
         process.exit(1);
       }
-      console.warn(`Connection closed (${code}), reconnecting…`);
-      connect(onMessage, onReady);
+      console.warn(`Connection closed (${code}), reconnecting in 5s…`);
+      setTimeout(() => connect(onMessage, onReady), 5000);
     }
   });
 
