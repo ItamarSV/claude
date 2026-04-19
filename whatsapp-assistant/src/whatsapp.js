@@ -87,8 +87,14 @@ export function createWhatsAppClient(onMessage) {
   });
 }
 
-export async function sendTyping(jid, typing = true) {
-  await sock.sendPresenceUpdate(typing ? 'composing' : 'paused', jid);
+export async function sendTyping(jid, typing = true, msgKey = null) {
+  try {
+    // Mark message as read first — required for typing indicator to show
+    if (msgKey) await sock.readMessages([msgKey]);
+    await sock.sendPresenceUpdate(typing ? 'composing' : 'paused', jid);
+  } catch (err) {
+    console.warn('sendTyping error:', err.message);
+  }
 }
 
 export async function sendMessage(jid, text, allowedJid) {

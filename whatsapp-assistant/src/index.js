@@ -12,7 +12,7 @@ async function run() {
 
   let assistantJid = null;
 
-  const onMessage = async ({ jid, text, fromMe }) => {
+  const onMessage = async ({ jid, text, fromMe, msg }) => {
     // Only handle messages from the Assistant group
     // fromMe: false = sent from your phone (different device); fromMe: true = bot's own sendMessage
     if (!assistantJid || jid !== assistantJid) return;
@@ -21,7 +21,7 @@ async function run() {
     console.log(`[${new Date().toLocaleTimeString()}] You: ${text}`);
 
     try {
-      await sendTyping(assistantJid, true);
+      await sendTyping(assistantJid, true, msg.key);
       const { reply, justSwitched } = await chat(text);
       await sendTyping(assistantJid, false);
       if (justSwitched) await sendMessage(assistantJid, "I've moved to Gemini", assistantJid);
