@@ -57,18 +57,19 @@ async function connect(onMessage, onReady) {
     }
   });
 
+  // fromMe: true = messages YOU send from your phone (what we listen to in the group)
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      if (msg.key.fromMe) continue;
       const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
         '';
       if (!text.trim()) continue;
-      const from = msg.key.remoteJid;
-      onMessage({ from, text, msg });
+      const jid = msg.key.remoteJid;
+      const fromMe = msg.key.fromMe ?? false;
+      onMessage({ jid, text, fromMe, msg });
     }
   });
 }
@@ -83,7 +84,8 @@ export async function sendMessage(jid, text) {
   await sock.sendMessage(jid, { text });
 }
 
-export function normalizeJid(phoneNumber) {
-  const digits = phoneNumber.replace(/\D/g, '');
-  return `${digits}@s.whatsapp.net`;
+export async function findGroupJid(groupName) {
+  const groups = await sock.groupFetchAllParticipating();
+  const match = Object.values(groups).find((g) => g.subject === groupName);
+  return match?.id ?? null;
 }
