@@ -22,8 +22,8 @@ async function run() {
 
     try {
       const { reply, justSwitched } = await chat(text);
-      if (justSwitched) await sendMessage(assistantJid, "I've moved to Gemini");
-      await sendMessage(assistantJid, reply);
+      if (justSwitched) await sendMessage(assistantJid, "I've moved to Gemini", assistantJid);
+      await sendMessage(assistantJid, reply, assistantJid);
       console.log(`[${new Date().toLocaleTimeString()}] Assistant: ${reply.slice(0, 80)}…`);
     } catch (err) {
       console.error('Error generating reply:', err.message);
@@ -45,7 +45,7 @@ async function run() {
   }
 
   console.log(`\n✅ Found "${ASSISTANT_CHAT_NAME}" group (${assistantJid})`);
-  await sendMessage(assistantJid, '👋 Assistant ready! Send me a message.');
+  await sendMessage(assistantJid, '👋 Assistant ready! Send me a message.', assistantJid);
   console.log('Listening for messages. Press Ctrl+C to stop.\n');
 }
 
