@@ -18,6 +18,7 @@ const logger = pino({ level: 'silent' });
 let sock = null;
 
 async function connect(onMessage, onReady) {
+  let waitingForQrScan = false;
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -39,8 +40,8 @@ async function connect(onMessage, onReady) {
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
+      waitingForQrScan = true;
       await QRCode.toFile(QR_PATH, qr, { scale: 8 });
-      // Print as terminal ASCII so it can be seen via SSH logs
       const ascii = await QRCode.toString(qr, { type: 'terminal', small: true });
       console.log('\n' + ascii);
       console.log(`QR code saved → ${QR_PATH}`);
@@ -48,6 +49,7 @@ async function connect(onMessage, onReady) {
     }
 
     if (connection === 'open') {
+      waitingForQrScan = false;
       console.log('WhatsApp connected!');
       onReady();
     }
@@ -62,8 +64,9 @@ async function connect(onMessage, onReady) {
         console.error('Session taken over by another device. Exiting.');
         process.exit(1);
       }
-      console.warn(`Connection closed (${code}), reconnecting in 5s…`);
-      setTimeout(() => connect(onMessage, onReady), 5000);
+      const delay = waitingForQrScan ? 60000 : 5000;
+      console.warn(`Connection closed (${code}), reconnecting in ${delay / 1000}s…`);
+      setTimeout(() => connect(onMessage, onReady), delay);
     }
   });
 
