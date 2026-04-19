@@ -87,6 +87,10 @@ export function createWhatsAppClient(onMessage) {
   });
 }
 
+export async function sendTyping(jid, typing = true) {
+  await sock.sendPresenceUpdate(typing ? 'composing' : 'paused', jid);
+}
+
 export async function sendMessage(jid, text, allowedJid) {
   if (allowedJid && jid !== allowedJid) {
     throw new Error(`Blocked: bot may only send to ${allowedJid}`);

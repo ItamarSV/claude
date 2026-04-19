@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createWhatsAppClient, sendMessage, findGroupJid } from './whatsapp.js';
+import { createWhatsAppClient, sendMessage, sendTyping, findGroupJid } from './whatsapp.js';
 import { chat } from './assistant.js';
 
 const ASSISTANT_CHAT_NAME = process.env.ASSISTANT_CHAT_NAME ?? 'Assistant';
@@ -21,7 +21,9 @@ async function run() {
     console.log(`[${new Date().toLocaleTimeString()}] You: ${text}`);
 
     try {
+      await sendTyping(assistantJid, true);
       const { reply, justSwitched } = await chat(text);
+      await sendTyping(assistantJid, false);
       if (justSwitched) await sendMessage(assistantJid, "I've moved to Gemini", assistantJid);
       await sendMessage(assistantJid, reply, assistantJid);
       console.log(`[${new Date().toLocaleTimeString()}] Assistant: ${reply.slice(0, 80)}…`);
