@@ -37,6 +37,9 @@ async function connect(onMessage, onReady) {
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
       await QRCode.toFile(QR_PATH, qr, { scale: 8 });
+      // Print as terminal ASCII so it can be seen via SSH logs
+      const ascii = await QRCode.toString(qr, { type: 'terminal', small: true });
+      console.log('\n' + ascii);
       console.log(`QR code saved → ${QR_PATH}`);
       try { execSync(`open "${QR_PATH}"`); } catch {}
     }
