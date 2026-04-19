@@ -11,6 +11,7 @@ export function createWhatsAppClient() {
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.CHROMIUM_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
       protocolTimeout: 120000,
     },
