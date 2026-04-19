@@ -18,7 +18,7 @@ export function createWhatsAppClient() {
         '--disable-dev-shm-usage',
         '--disable-gpu',
       ],
-      protocolTimeout: 120000,
+      protocolTimeout: 300000,
     },
   });
 
