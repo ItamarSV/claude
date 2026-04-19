@@ -1,64 +1,89 @@
-import pkg from 'whatsapp-web.js';
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+} from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import { execSync } from 'child_process';
 import path from 'path';
+import pino from 'pino';
+import { Boom } from '@hapi/boom';
 
-const { Client, LocalAuth } = pkg;
 const QR_PATH = path.resolve('qr.png');
+const AUTH_PATH = './.baileys_auth';
 
-export function createWhatsAppClient() {
-  const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
-    puppeteer: {
-      headless: true,
-      executablePath: process.env.CHROMIUM_PATH || undefined,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-      protocolTimeout: 300000,
+const logger = pino({ level: 'silent' });
+
+let sock = null;
+
+async function connect(onMessage, onReady) {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
+  const { version } = await fetchLatestBaileysVersion();
+
+  sock = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
+    logger,
+    printQRInTerminal: false,
+    browser: ['WhatsApp Assistant', 'Chrome', '1.0.0'],
   });
 
-  client.on('qr', async (qr) => {
-    await QRCode.toFile(QR_PATH, qr, { scale: 8 });
-    console.log(`QR code saved → ${QR_PATH}`);
-    try { execSync(`open "${QR_PATH}"`); } catch {}
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      await QRCode.toFile(QR_PATH, qr, { scale: 8 });
+      console.log(`QR code saved → ${QR_PATH}`);
+      try { execSync(`open "${QR_PATH}"`); } catch {}
+    }
+
+    if (connection === 'open') {
+      console.log('WhatsApp connected!');
+      onReady();
+    }
+
+    if (connection === 'close') {
+      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      if (code === DisconnectReason.loggedOut) {
+        console.error('Logged out. Delete .baileys_auth and restart to re-scan QR.');
+        process.exit(1);
+      }
+      console.warn(`Connection closed (${code}), reconnecting…`);
+      connect(onMessage, onReady);
+    }
   });
 
-  client.on('authenticated', () => console.log('WhatsApp authenticated.'));
-  client.on('auth_failure', (msg) => { console.error('Auth failed:', msg); process.exit(1); });
-  client.on('disconnected', (reason) => console.warn('Disconnected:', reason));
-
-  return client;
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (msg.key.fromMe) continue;
+      const text =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        msg.message?.imageMessage?.caption ||
+        '';
+      if (!text.trim()) continue;
+      const from = msg.key.remoteJid;
+      onMessage({ from, text, msg });
+    }
+  });
 }
 
-export async function findAssistantChat(client, chatName) {
-  const chats = await client.getChats();
-  return chats.find((c) => c.name === chatName) ?? null;
+export function createWhatsAppClient(onMessage) {
+  return new Promise((resolve) => {
+    connect(onMessage, () => resolve());
+  });
 }
 
-export async function fetchChatContext(chat, limit = 10) {
-  try {
-    const messages = await chat.fetchMessages({ limit });
-    return messages.map((m) => ({ fromMe: m.fromMe, body: m.body }));
-  } catch {
-    return [];
-  }
+export async function sendMessage(jid, text) {
+  await sock.sendMessage(jid, { text });
 }
 
-export async function fetchRecentChats(client, limit = 15) {
-  const chats = await client.getChats();
-  const results = [];
-  for (const chat of chats.slice(0, limit)) {
-    let messages;
-    try { messages = await chat.fetchMessages({ limit: 3 }); } catch { continue; }
-    if (!messages.length) continue;
-    const last = messages[messages.length - 1];
-    if (!last.body || last.fromMe) continue;
-    results.push({ chatName: chat.name || chat.id.user, isGroup: chat.isGroup, lastMessage: last.body });
-  }
-  return results;
+export function normalizeJid(phoneNumber) {
+  const digits = phoneNumber.replace(/\D/g, '');
+  return `${digits}@s.whatsapp.net`;
 }
