@@ -24,6 +24,9 @@ WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://whatsapp-s
 _latest_seq: dict[str, int] = {}
 _seq_lock = Lock()
 
+# Session: groups where the bot is awaiting a follow-up reply (bypass mention filter)
+_awaiting_reply: set[str] = set()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -107,7 +110,10 @@ async def webhook(msg: IncomingMessage):
             return {"ok": True}
 
         # Active — apply policy 1 (mention-only)
-        if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot:
+        awaiting = msg.group_id in _awaiting_reply
+        if awaiting:
+            _awaiting_reply.discard(msg.group_id)
+        if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot and not awaiting:
             return {"ok": True}
 
     # Generate AI response
@@ -122,6 +128,7 @@ async def webhook(msg: IncomingMessage):
         return {"ok": True}
 
     if isinstance(reply, dict):
+        _awaiting_reply.add(msg.group_id)
         await _send(msg.group_id, reply["text"], reply.get("buttons"))
     else:
         await _send(msg.group_id, reply)

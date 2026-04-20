@@ -167,21 +167,8 @@ app.post('/send', async (req, res) => {
   }
   try {
     if (buttons && buttons.length > 0) {
-      try {
-        await sock.sendMessage(group_id, {
-          text,
-          footer: '',
-          buttonText: 'Choose',
-          sections: [{
-            title: 'Options',
-            rows: buttons.map(b => ({ title: b.text, id: b.id })),
-          }],
-        });
-      } catch (listErr) {
-        console.error('List message failed, falling back to text:', listErr.message);
-        const lines = buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
-        await sock.sendMessage(group_id, { text: `${text}\n\n${lines}\n\nReply *1* or *2*` });
-      }
+      const lines = buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
+      await sock.sendMessage(group_id, { text: `${text}\n\n${lines}\n\nReply *1* or *2*` });
     } else {
       await sock.sendMessage(group_id, { text });
     }
