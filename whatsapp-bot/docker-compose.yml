@@ -1,0 +1,33 @@
+services:
+  whatsapp-service:
+    build: ./whatsapp-service
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - WHATSAPP_SERVICE_PORT=3000
+      - BOT_SERVICE_URL=http://bot-service:8000
+    volumes:
+      - ./whatsapp-service/.baileys_auth:/app/.baileys_auth
+    networks:
+      - bot-network
+
+  bot-service:
+    build: ./bot-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - WHATSAPP_SERVICE_URL=http://whatsapp-service:3000
+    volumes:
+      - ./bot-service/group_histories:/app/group_histories
+      - ./bot-service/cost_logs:/app/cost_logs
+    networks:
+      - bot-network
+    depends_on:
+      - whatsapp-service
+
+networks:
+  bot-network:
+    driver: bridge

@@ -1,0 +1,8 @@
+.env
+whatsapp-service/.baileys_auth/
+whatsapp-service/node_modules/
+bot-service/group_histories/
+bot-service/cost_logs/
+__pycache__/
+*.pyc
+.DS_Store
