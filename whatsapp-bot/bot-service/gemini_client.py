@@ -35,7 +35,7 @@ _history_tool = Tool(function_declarations=[
     )
 ])
 
-_search_tool = Tool(google_search_retrieval={})
+_search_tool = {"google_search_retrieval": {}}
 
 
 async def process_message(group_id: str, sender: str, text: str) -> str:
