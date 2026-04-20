@@ -63,6 +63,7 @@ async function connectToWhatsApp() {
   });
 
   sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
+    console.log(`group-participants.update: action=${action} id=${id} participants=${participants} botNumber=${botNumber}`);
     if (action === 'add' && botNumber && participants.some(p => p.startsWith(botNumber + '@'))) {
       try {
         const meta = await sock.groupMetadata(id);
@@ -72,6 +73,20 @@ async function connectToWhatsApp() {
         });
       } catch (err) {
         console.error('Failed to notify group-joined:', err.message);
+      }
+    }
+  });
+
+  sock.ev.on('groups.upsert', async (groups) => {
+    for (const group of groups) {
+      console.log(`groups.upsert: id=${group.id} subject=${group.subject}`);
+      try {
+        await axios.post(`${BOT_SERVICE_URL}/group-joined`, {
+          group_id: group.id,
+          group_name: group.subject || group.id,
+        });
+      } catch (err) {
+        console.error('Failed to notify group-joined (upsert):', err.message);
       }
     }
   });
