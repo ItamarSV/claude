@@ -65,10 +65,10 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
     # Check if this is a reply to a pending web search confirmation
     if group_id in _pending_web_search:
         clean = text.strip().lower()
-        if clean in ("yes", "yeah", "sure", "yep", "כן", "אוקי", "ok", "web_search_yes"):
+        if clean in ("yes", "yeah", "sure", "yep", "כן", "אוקי", "ok", "web_search_yes", "1"):
             original = _pending_web_search.pop(group_id)
             return await _web_search_call(group_id, original)
-        elif clean in ("no", "nope", "לא", "web_search_no"):
+        elif clean in ("no", "nope", "לא", "web_search_no", "2"):
             _pending_web_search.pop(group_id, None)
             return "Got it, skipping the web search."
         else:

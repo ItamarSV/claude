@@ -119,18 +119,24 @@ app.post('/send', async (req, res) => {
   }
   try {
     if (buttons && buttons.length > 0) {
-      const interactiveMsg = proto.Message.fromObject({
-        interactiveMessage: {
-          body: { text },
-          nativeFlowMessage: {
-            buttons: buttons.map(b => ({
-              name: 'quick_reply',
-              buttonParamsJson: JSON.stringify({ display_text: b.text, id: b.id }),
-            })),
+      try {
+        const interactiveMsg = proto.Message.fromObject({
+          interactiveMessage: {
+            body: { text },
+            nativeFlowMessage: {
+              buttons: buttons.map(b => ({
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({ display_text: b.text, id: b.id }),
+              })),
+            },
           },
-        },
-      });
-      await sock.relayMessage(group_id, interactiveMsg, {});
+        });
+        await sock.relayMessage(group_id, interactiveMsg, {});
+      } catch (btnErr) {
+        console.error('Interactive message failed, falling back to text:', btnErr.message);
+        const fallbackLines = buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
+        await sock.sendMessage(group_id, { text: `${text}\n\n${fallbackLines}\n\nReply *1* or *2*` });
+      }
     } else {
       await sock.sendMessage(group_id, { text });
     }

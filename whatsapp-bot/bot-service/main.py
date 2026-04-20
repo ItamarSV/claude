@@ -54,10 +54,11 @@ async def webhook(msg: IncomingMessage):
 
     async with httpx.AsyncClient(timeout=30) as client:
         try:
-            await client.post(
+            r = await client.post(
                 f"{WHATSAPP_SERVICE_URL}/send",
                 json=payload,
             )
+            r.raise_for_status()
         except Exception as e:
             print(f"Failed to send reply: {e}")
             raise HTTPException(status_code=502, detail="Failed to deliver reply")
