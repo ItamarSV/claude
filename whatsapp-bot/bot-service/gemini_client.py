@@ -4,7 +4,6 @@ from google.genai.types import (
     GenerateContentConfig,
     Tool,
     FunctionDeclaration,
-    GoogleSearch,
 )
 from history_manager import read_history
 from cost_tracker import record_call
@@ -38,10 +37,7 @@ _history_func = FunctionDeclaration(
     },
 )
 
-_tools = [
-    Tool(function_declarations=[_history_func]),
-    Tool(google_search=GoogleSearch()),
-]
+_tools = [Tool(function_declarations=[_history_func])]
 
 _base_config = GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
@@ -71,10 +67,7 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
             followup = client.models.generate_content(
                 model=MODEL,
                 contents=f"{history_context}Now answer this message:\n{user_message}",
-                config=GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    tools=[Tool(google_search=GoogleSearch())],
-                ),
+                config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
             )
             _track_cost(group_id, followup)
             return _extract_text(followup)
