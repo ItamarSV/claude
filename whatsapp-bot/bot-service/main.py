@@ -119,8 +119,8 @@ async def webhook(msg: IncomingMessage):
         if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot and not awaiting:
             return {"ok": True}
 
-    # Usage command: "/usage"
-    if msg.text.strip().lower().startswith("/usage"):
+    # Usage command: "/usage" (Main group only)
+    if is_main_group(msg.group_id) and msg.text.strip().lower().startswith("/usage"):
         now = datetime.now(timezone.utc)
         s = get_monthly_summary(now.year, now.month)
         lines = [f"📊 *Gemini usage — {now.strftime('%B %Y')}*\n"]
