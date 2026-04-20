@@ -62,11 +62,10 @@ async def _send(group_id: str, text: str, buttons: list | None = None):
 
 @app.post("/group-joined")
 async def group_joined(body: GroupJoined):
-    if is_main_group(body.group_id):
+    if is_main_group(body.group_id) or not MAIN_GROUP_ID:
         return {"ok": True}
-    if get_status(body.group_id) == "new" and MAIN_GROUP_ID:
-        set_pending(body.group_id, body.group_name)
-        await _send(MAIN_GROUP_ID, new_group_message(body.group_name))
+    set_pending(body.group_id, body.group_name)
+    await _send(MAIN_GROUP_ID, new_group_message(body.group_name))
     return {"ok": True}
 
 
