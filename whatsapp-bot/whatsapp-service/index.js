@@ -59,7 +59,8 @@ async function connectToWhatsApp() {
 
     if (connection === 'open') {
       botNumber = sock.user?.id?.split(':')[0] || sock.user?.id?.split('@')[0] || null;
-      botLid = sock.user?.lid?.split(':')[0] || sock.user?.lid?.split('@')[0] || null;
+      botLid = sock.user?.lid?.split(':')[0] || sock.user?.lid?.split('@')[0] ||
+               state.creds?.me?.lid?.split(':')[0] || state.creds?.me?.lid?.split('@')[0] || null;
       console.log(`WhatsApp connected. botNumber=${botNumber} botLid=${botLid}`);
     }
   });
