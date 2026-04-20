@@ -144,7 +144,13 @@ async def webhook(msg: IncomingMessage):
         if s["by_group"]:
             lines.append("*Per group:*")
             for gid, g in sorted(s["by_group"].items(), key=lambda x: -x[1]["cost"]):
-                name = get_group_name(gid) if not is_main_group(gid) else "Main"
+                if is_main_group(gid):
+                    name = "Main"
+                else:
+                    name = get_group_name(gid)
+                    if name == gid:
+                        await _fetch_and_cache_group_name(gid)
+                        name = get_group_name(gid)
                 lines.append(f"• {name}: {g['calls']} calls, {g['tokens']:,} tokens, ${g['cost']:.4f}")
         reply = "\n".join(lines)
         await _send(msg.group_id, reply)
