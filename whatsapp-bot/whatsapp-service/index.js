@@ -20,7 +20,8 @@ const AUTH_FOLDER = path.join(__dirname, '.baileys_auth');
 const logger = pino({ level: 'silent' });
 
 let sock = null;
-let botNumber = null; // e.g. "972559925787" — set after connection opens
+let botNumber = null; // phone number, e.g. "972559925787"
+let botLid = null;    // LID number, e.g. "36014072553559"
 
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -58,35 +59,28 @@ async function connectToWhatsApp() {
 
     if (connection === 'open') {
       botNumber = sock.user?.id?.split(':')[0] || sock.user?.id?.split('@')[0] || null;
-      console.log(`WhatsApp connected. Bot number: ${botNumber}`);
+      botLid = sock.user?.lid?.split(':')[0] || sock.user?.lid?.split('@')[0] || null;
+      console.log(`WhatsApp connected. botNumber=${botNumber} botLid=${botLid}`);
     }
   });
 
   sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
-    console.log(`group-participants.update: action=${action} id=${id} participants=${participants} botNumber=${botNumber}`);
-    if (action === 'add' && botNumber && participants.some(p => p.startsWith(botNumber + '@'))) {
+    console.log(`group-participants.update: action=${action} id=${id} participants=${JSON.stringify(participants)}`);
+    if (action !== 'add') return;
+    const isBotAdded = participants.some(p =>
+      (botNumber && p.startsWith(botNumber + '@')) ||
+      (botLid && p.startsWith(botLid + '@'))
+    );
+    if (isBotAdded) {
       try {
         const meta = await sock.groupMetadata(id);
+        console.log(`Bot added to group: ${meta.subject}`);
         await axios.post(`${BOT_SERVICE_URL}/group-joined`, {
           group_id: id,
           group_name: meta.subject || id,
         });
       } catch (err) {
         console.error('Failed to notify group-joined:', err.message);
-      }
-    }
-  });
-
-  sock.ev.on('groups.upsert', async (groups) => {
-    for (const group of groups) {
-      console.log(`groups.upsert: id=${group.id} subject=${group.subject}`);
-      try {
-        await axios.post(`${BOT_SERVICE_URL}/group-joined`, {
-          group_id: group.id,
-          group_name: group.subject || group.id,
-        });
-      } catch (err) {
-        console.error('Failed to notify group-joined (upsert):', err.message);
       }
     }
   });
@@ -120,9 +114,13 @@ async function connectToWhatsApp() {
       if (!text) continue;
 
       const mentionedJids = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
-      const isBotMentioned = botNumber
-        ? mentionedJids.some(jid => jid.startsWith(botNumber + '@'))
-        : false;
+      const isBotMentioned =
+        (botNumber && mentionedJids.some(jid => jid.startsWith(botNumber + '@'))) ||
+        (botLid && mentionedJids.some(jid => jid.startsWith(botLid + '@'))) ||
+        false;
+      if (mentionedJids.length > 0) {
+        console.log(`mentions: ${JSON.stringify(mentionedJids)} isBotMentioned=${isBotMentioned} botNumber=${botNumber} botLid=${botLid}`);
+      }
 
       const sender = msg.pushName || msg.key.participant?.split('@')[0] || 'Unknown';
       const timestamp = new Date(msg.messageTimestamp * 1000).toISOString();
