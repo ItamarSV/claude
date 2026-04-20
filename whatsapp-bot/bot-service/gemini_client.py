@@ -4,6 +4,7 @@ from google.genai.types import (
     GenerateContentConfig,
     Tool,
     FunctionDeclaration,
+    GoogleSearch,
 )
 from history_manager import read_history
 from cost_tracker import record_call
@@ -13,8 +14,9 @@ client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = """You are a helpful assistant in a WhatsApp group chat.
-You have access to Google Search for real-time information (weather, news, facts, etc.).
-You also have a tool to read the full chat history of this group when questions require it.
+You have a tool to read the full chat history of this group when questions require it.
+You also have a tool to request internet access when you need real-time or current information
+(news, weather, live prices, recent events, etc.) that you don't have in your training data.
 Keep responses concise and conversational — this is a chat, not a document.
 When using chat history, reference specific details to show you actually read it."""
 
@@ -28,24 +30,46 @@ _history_func = FunctionDeclaration(
     parameters={
         "type": "OBJECT",
         "properties": {
-            "group_id": {
-                "type": "STRING",
-                "description": "The WhatsApp group ID",
-            }
+            "group_id": {"type": "STRING", "description": "The WhatsApp group ID"}
         },
         "required": ["group_id"],
     },
 )
 
-_tools = [Tool(function_declarations=[_history_func])]
+_web_search_func = FunctionDeclaration(
+    name="request_web_search",
+    description=(
+        "Call this when you need real-time or current information from the internet "
+        "that you don't have in your training data — e.g. today's weather, live news, "
+        "current prices, recent events, or anything time-sensitive."
+    ),
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "reason": {"type": "STRING", "description": "Why internet access is needed"}
+        },
+        "required": ["reason"],
+    },
+)
 
 _base_config = GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
-    tools=_tools,
+    tools=[Tool(function_declarations=[_history_func, _web_search_func])],
 )
+
+# Per-group pending web search state: group_id -> original message
+_pending_web_search: dict[str, str] = {}
 
 
 async def process_message(group_id: str, sender: str, text: str) -> str:
+    # Check if this is a "yes" reply to a pending web search
+    if group_id in _pending_web_search:
+        if text.strip().lower() in ("yes", "yeah", "sure", "yep", "כן", "אוקי", "ok"):
+            original = _pending_web_search.pop(group_id)
+            return await _web_search_call(group_id, original)
+        else:
+            _pending_web_search.pop(group_id, None)
+
     user_message = f"{sender}: {text}"
 
     response = client.models.generate_content(
@@ -57,21 +81,39 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
 
     for part in response.candidates[0].content.parts:
         fc = getattr(part, "function_call", None)
-        if fc and fc.name == "get_group_history":
-            history = read_history(group_id)
-            history_context = (
-                f"Here is the full chat history for this group:\n\n{history}\n\n"
-                if history
-                else "No chat history available yet for this group.\n\n"
-            )
-            followup = client.models.generate_content(
-                model=MODEL,
-                contents=f"{history_context}Now answer this message:\n{user_message}",
-                config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-            )
-            _track_cost(group_id, followup)
-            return _extract_text(followup)
+        if fc:
+            if fc.name == "get_group_history":
+                history = read_history(group_id)
+                history_context = (
+                    f"Here is the full chat history for this group:\n\n{history}\n\n"
+                    if history
+                    else "No chat history available yet for this group.\n\n"
+                )
+                followup = client.models.generate_content(
+                    model=MODEL,
+                    contents=f"{history_context}Now answer this message:\n{user_message}",
+                    config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                )
+                _track_cost(group_id, followup)
+                return _extract_text(followup)
 
+            if fc.name == "request_web_search":
+                _pending_web_search[group_id] = user_message
+                return "I need internet access to answer this accurately. Want me to search the web? Reply *yes* to proceed."
+
+    return _extract_text(response)
+
+
+async def _web_search_call(group_id: str, user_message: str) -> str:
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=user_message,
+        config=GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            tools=[Tool(google_search=GoogleSearch())],
+        ),
+    )
+    _track_cost(group_id, response)
     return _extract_text(response)
 
 
