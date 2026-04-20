@@ -133,6 +133,16 @@ async def _web_search_call(group_id: str, user_message: str) -> str:
     return _extract_text(response)
 
 
+async def summarize_text(group_id: str, prompt: str) -> str:
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+    )
+    _track_cost(group_id, response)
+    return _extract_text(response)
+
+
 def _extract_text(response) -> str:
     for part in response.candidates[0].content.parts:
         if hasattr(part, "text") and part.text:

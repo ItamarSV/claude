@@ -1,6 +1,7 @@
 import os
 from asyncio import Lock
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -10,12 +11,13 @@ from pydantic import BaseModel
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from gemini_client import process_message
-from history_manager import append_message, HISTORIES_DIR
+from gemini_client import process_message, summarize_text
+from history_manager import append_message, read_history_since, HISTORIES_DIR
 from cost_tracker import COST_LOGS_DIR
 from policy_manager import (
     is_main_group, get_status, set_pending, get_pending,
-    activate, is_mention_only, new_group_message, MAIN_GROUP_ID,
+    activate, is_mention_only, get_group_name, get_all_active_groups,
+    new_group_message, MAIN_GROUP_ID,
 )
 
 WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://whatsapp-service:3000")
@@ -116,6 +118,41 @@ async def webhook(msg: IncomingMessage):
         if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot and not awaiting:
             return {"ok": True}
 
+    # Summarize command: "/summarize"
+    if msg.text.strip().lower().startswith("/summarize"):
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+        if is_main_group(msg.group_id):
+            active_groups = get_all_active_groups()
+            print(f"[summarize] active groups: {[(gid, name) for gid, name in active_groups]}")
+            parts = []
+            for gid, name in active_groups:
+                chunk = read_history_since(gid, today_start)
+                print(f"[summarize] group={name} ({gid}) lines={len(chunk.splitlines()) if chunk else 0}")
+                if chunk:
+                    parts.append(f"=== {name} ===\n{chunk}")
+            combined = "\n\n".join(parts) if parts else None
+            if not combined:
+                reply = f"No activity in any group today. (Checked {len(active_groups)} groups)"
+            else:
+                reply = await summarize_text(
+                    msg.group_id,
+                    f"Summarize today's activity across all groups:\n\n{combined}",
+                )
+        else:
+            chunk = read_history_since(msg.group_id, today_start)
+            if not chunk:
+                reply = "No conversation recorded today yet."
+            else:
+                reply = await summarize_text(
+                    msg.group_id,
+                    f"Summarize today's conversation in this group:\n\n{chunk}",
+                )
+        if _latest_seq.get(msg.group_id) != seq:
+            return {"ok": True}
+        await _send(msg.group_id, reply)
+        await append_message(msg.group_id, "Bot", reply, datetime.now(timezone.utc).isoformat())
+        return {"ok": True}
+
     # Generate AI response
     try:
         reply = await process_message(msg.group_id, msg.sender, msg.text)
@@ -127,11 +164,15 @@ async def webhook(msg: IncomingMessage):
     if _latest_seq.get(msg.group_id) != seq:
         return {"ok": True}
 
+    reply_text = reply["text"] if isinstance(reply, dict) else reply
+
     if isinstance(reply, dict):
         _awaiting_reply.add(msg.group_id)
         await _send(msg.group_id, reply["text"], reply.get("buttons"))
     else:
         await _send(msg.group_id, reply)
+
+    await append_message(msg.group_id, "Bot", reply_text, datetime.now(timezone.utc).isoformat())
 
     return {"ok": True}
 

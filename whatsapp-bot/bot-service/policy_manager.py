@@ -41,10 +41,26 @@ def get_pending() -> dict | None:
 
 def activate(group_id: str, mention_only: bool):
     data = _load()
-    data[group_id] = {"status": "active", "mention_only": mention_only}
-    if data.get("_pending", {}).get("group_id") == group_id:
+    pending = data.get("_pending", {})
+    group_name = pending.get("group_name", group_id) if pending.get("group_id") == group_id else group_id
+    data[group_id] = {"status": "active", "mention_only": mention_only, "name": group_name}
+    if pending.get("group_id") == group_id:
         del data["_pending"]
     _save(data)
+
+
+def get_group_name(group_id: str) -> str:
+    return _load().get(group_id, {}).get("name", group_id)
+
+
+def get_all_active_groups() -> list[tuple[str, str]]:
+    """Returns list of (group_id, display_name) for all active non-main groups."""
+    data = _load()
+    return [
+        (gid, entry.get("name", gid))
+        for gid, entry in data.items()
+        if not gid.startswith("_") and entry.get("status") == "active"
+    ]
 
 
 def is_mention_only(group_id: str) -> bool:
