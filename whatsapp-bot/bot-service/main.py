@@ -12,6 +12,7 @@ from pydantic import BaseModel
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from gemini_client import process_message, summarize_text
+from cost_tracker import get_monthly_summary
 from history_manager import append_message, read_history_since, HISTORIES_DIR
 from cost_tracker import COST_LOGS_DIR
 from policy_manager import (
@@ -117,6 +118,21 @@ async def webhook(msg: IncomingMessage):
             _awaiting_reply.discard(msg.group_id)
         if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot and not awaiting:
             return {"ok": True}
+
+    # Usage command: "/usage"
+    if msg.text.strip().lower().startswith("/usage"):
+        now = datetime.now(timezone.utc)
+        s = get_monthly_summary(now.year, now.month)
+        lines = [f"📊 *Gemini usage — {now.strftime('%B %Y')}*\n"]
+        lines.append(f"Total calls: {s['total_calls']}  |  Tokens: {s['total_tokens']:,}  |  Cost: ${s['total_cost']:.4f}\n")
+        if s["by_group"]:
+            lines.append("*Per group:*")
+            for gid, g in sorted(s["by_group"].items(), key=lambda x: -x[1]["cost"]):
+                name = get_group_name(gid) if not is_main_group(gid) else "Main"
+                lines.append(f"• {name}: {g['calls']} calls, {g['tokens']:,} tokens, ${g['cost']:.4f}")
+        reply = "\n".join(lines)
+        await _send(msg.group_id, reply)
+        return {"ok": True}
 
     # Summarize command: "/summarize"
     if msg.text.strip().lower().startswith("/summarize"):

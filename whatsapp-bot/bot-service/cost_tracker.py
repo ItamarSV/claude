@@ -72,9 +72,10 @@ def get_monthly_summary(year: int, month: int) -> dict:
         else:
             summary["tier2_calls"] += 1
 
-        g = summary["by_group"].setdefault(group_id, {"cost": 0.0, "calls": 0})
+        g = summary["by_group"].setdefault(group_id, {"cost": 0.0, "calls": 0, "tokens": 0})
         g["cost"] += cost
         g["calls"] += 1
+        g["tokens"] += in_tok + out_tok
 
     summary["total_cost"] = round(summary["total_cost"], 5)
     return summary
