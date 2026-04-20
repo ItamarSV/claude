@@ -123,6 +123,9 @@ async function connectToWhatsApp() {
         console.log(`mentions: ${JSON.stringify(mentionedJids)} isBotMentioned=${isBotMentioned} botNumber=${botNumber} botLid=${botLid}`);
       }
 
+      // Strip @mention markers from text so Gemini doesn't see raw IDs
+      const cleanText = text.replace(/@\d+/g, '').replace(/\s+/g, ' ').trim();
+
       const sender = msg.pushName || msg.key.participant?.split('@')[0] || 'Unknown';
       const timestamp = new Date(msg.messageTimestamp * 1000).toISOString();
 
@@ -130,7 +133,7 @@ async function connectToWhatsApp() {
         await axios.post(`${BOT_SERVICE_URL}/webhook`, {
           group_id: jid,
           sender,
-          text,
+          text: cleanText,
           timestamp,
           is_bot_mentioned: isBotMentioned,
         });
