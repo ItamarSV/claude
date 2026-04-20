@@ -41,6 +41,7 @@ class IncomingMessage(BaseModel):
     text: str
     timestamp: str
     is_bot_mentioned: bool = False
+    is_reply_to_bot: bool = False
 
 
 class GroupJoined(BaseModel):
@@ -106,7 +107,7 @@ async def webhook(msg: IncomingMessage):
             return {"ok": True}
 
         # Active — apply policy 1 (mention-only)
-        if is_mention_only(msg.group_id) and not msg.is_bot_mentioned:
+        if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot:
             return {"ok": True}
 
     # Generate AI response

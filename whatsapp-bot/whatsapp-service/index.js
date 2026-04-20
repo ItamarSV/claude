@@ -123,6 +123,12 @@ async function connectToWhatsApp() {
         console.log(`mentions: ${JSON.stringify(mentionedJids)} isBotMentioned=${isBotMentioned} botNumber=${botNumber} botLid=${botLid}`);
       }
 
+      const quotedParticipant = msg.message.extendedTextMessage?.contextInfo?.participant || '';
+      const isReplyToBot =
+        (botNumber && quotedParticipant.startsWith(botNumber + '@')) ||
+        (botLid && quotedParticipant.startsWith(botLid + '@')) ||
+        false;
+
       // Strip @mention markers from text so Gemini doesn't see raw IDs
       const cleanText = text.replace(/@\d+/g, '').replace(/\s+/g, ' ').trim();
 
@@ -136,6 +142,7 @@ async function connectToWhatsApp() {
           text: cleanText,
           timestamp,
           is_bot_mentioned: isBotMentioned,
+          is_reply_to_bot: isReplyToBot,
         });
       } catch (err) {
         console.error('Failed to forward message to bot-service:', err.message);
