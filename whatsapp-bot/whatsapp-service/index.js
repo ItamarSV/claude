@@ -1,21 +1,17 @@
-import {
+const {
   makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-} from '@whiskeysockets/baileys';
-import express from 'express';
-import axios from 'axios';
-import qrcode from 'qrcode-terminal';
-import pino from 'pino';
-import { readFileSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+} = require('@whiskeysockets/baileys');
+const express = require('express');
+const axios = require('axios');
+const qrcode = require('qrcode-terminal');
+const pino = require('pino');
+const path = require('path');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://bot-service:8000';
+const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://localhost:8000';
 const PORT = parseInt(process.env.WHATSAPP_SERVICE_PORT || '3000');
 const AUTH_FOLDER = path.join(__dirname, '.baileys_auth');
 
@@ -70,10 +66,8 @@ async function connectToWhatsApp() {
       if (!msg.message) continue;
 
       const jid = msg.key.remoteJid;
-      const isGroup = jid.endsWith('@g.us');
-      if (!isGroup) continue;
+      if (!jid || !jid.endsWith('@g.us')) continue;
 
-      // Skip messages sent by the bot itself
       if (msg.key.fromMe) continue;
 
       const text =
@@ -100,7 +94,6 @@ async function connectToWhatsApp() {
   });
 }
 
-// HTTP server so bot-service can ask us to send messages
 const app = express();
 app.use(express.json());
 
