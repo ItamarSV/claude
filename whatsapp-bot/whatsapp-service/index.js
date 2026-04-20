@@ -7,9 +7,11 @@ const {
 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const axios = require('axios');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const pino = require('pino');
 const path = require('path');
+
+let latestQR = null;
 
 const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://localhost:8000';
 const PORT = parseInt(process.env.WHATSAPP_SERVICE_PORT || '3000');
@@ -38,9 +40,8 @@ async function connectToWhatsApp() {
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log('\n--- Scan this QR code with WhatsApp ---');
-      qrcode.generate(qr, { small: true });
-      console.log('---------------------------------------\n');
+      latestQR = qr;
+      console.log('New QR code ready. Open http://YOUR_VM_IP:3000/qr to scan.');
     }
 
     if (connection === 'close') {
@@ -111,6 +112,25 @@ app.post('/send', async (req, res) => {
   } catch (err) {
     console.error('Failed to send message:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/qr', async (_req, res) => {
+  if (!latestQR) {
+    return res.send('<h2>No QR code yet — WhatsApp may already be connected or still loading. Refresh in a few seconds.</h2>');
+  }
+  try {
+    const dataUrl = await QRCode.toDataURL(latestQR, { width: 400 });
+    res.send(`
+      <html><body style="display:flex;flex-direction:column;align-items:center;font-family:sans-serif;padding:40px">
+        <h2>Scan with WhatsApp (bot account)</h2>
+        <img src="${dataUrl}" />
+        <p>This page auto-refreshes every 20 seconds. QR codes expire — refresh if scan fails.</p>
+        <script>setTimeout(() => location.reload(), 20000)</script>
+      </body></html>
+    `);
+  } catch (e) {
+    res.status(500).send('Failed to generate QR image.');
   }
 });
 
