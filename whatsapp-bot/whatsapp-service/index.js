@@ -20,6 +20,7 @@ const AUTH_FOLDER = path.join(__dirname, '.baileys_auth');
 const logger = pino({ level: 'silent' });
 
 let sock = null;
+let botNumber = null; // e.g. "972559925787" — set after connection opens
 
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -56,7 +57,16 @@ async function connectToWhatsApp() {
     }
 
     if (connection === 'open') {
-      console.log('WhatsApp connected.');
+      botNumber = sock.user?.id?.split(':')[0] || sock.user?.id?.split('@')[0] || null;
+      console.log(`WhatsApp connected. Bot number: ${botNumber}`);
+    }
+  });
+
+  sock.ev.on('group-participants.update', ({ id, participants, action }) => {
+    if (action === 'add' && botNumber && participants.some(p => p.startsWith(botNumber + '@'))) {
+      axios.post(`${BOT_SERVICE_URL}/group-joined`, { group_id: id }).catch(err => {
+        console.error('Failed to notify group-joined:', err.message);
+      });
     }
   });
 
@@ -88,6 +98,11 @@ async function connectToWhatsApp() {
 
       if (!text) continue;
 
+      const mentionedJids = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
+      const isBotMentioned = botNumber
+        ? mentionedJids.some(jid => jid.startsWith(botNumber + '@'))
+        : false;
+
       const sender = msg.pushName || msg.key.participant?.split('@')[0] || 'Unknown';
       const timestamp = new Date(msg.messageTimestamp * 1000).toISOString();
 
@@ -97,6 +112,7 @@ async function connectToWhatsApp() {
           sender,
           text,
           timestamp,
+          is_bot_mentioned: isBotMentioned,
         });
       } catch (err) {
         console.error('Failed to forward message to bot-service:', err.message);
