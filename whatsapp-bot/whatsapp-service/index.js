@@ -62,11 +62,17 @@ async function connectToWhatsApp() {
     }
   });
 
-  sock.ev.on('group-participants.update', ({ id, participants, action }) => {
+  sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
     if (action === 'add' && botNumber && participants.some(p => p.startsWith(botNumber + '@'))) {
-      axios.post(`${BOT_SERVICE_URL}/group-joined`, { group_id: id }).catch(err => {
+      try {
+        const meta = await sock.groupMetadata(id);
+        await axios.post(`${BOT_SERVICE_URL}/group-joined`, {
+          group_id: id,
+          group_name: meta.subject || id,
+        });
+      } catch (err) {
         console.error('Failed to notify group-joined:', err.message);
-      });
+      }
     }
   });
 

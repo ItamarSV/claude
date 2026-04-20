@@ -1,15 +1,9 @@
 import json
+import os
 from pathlib import Path
 
 POLICIES_FILE = Path(__file__).parent / "group_policies.json"
-
-SETUP_MESSAGE = (
-    "I've been added to this group!\n\n"
-    "Please set my response policy:\n"
-    "*1.* Reply only when @mentioned\n"
-    "*2.* Reply to all messages\n\n"
-    "Reply *1* or *2*. I won't respond to other messages until this is set."
-)
+MAIN_GROUP_ID = os.environ.get("MAIN_GROUP_ID", "")
 
 
 def _load() -> dict:
@@ -22,22 +16,46 @@ def _save(data: dict):
     POLICIES_FILE.write_text(json.dumps(data, indent=2))
 
 
+def is_main_group(group_id: str) -> bool:
+    return bool(MAIN_GROUP_ID) and group_id == MAIN_GROUP_ID
+
+
 def get_status(group_id: str) -> str:
     """Returns 'active', 'pending', or 'new'."""
+    if is_main_group(group_id):
+        return "active"
     return _load().get(group_id, {}).get("status", "new")
 
 
-def set_pending(group_id: str):
+def set_pending(group_id: str, group_name: str):
     data = _load()
     data[group_id] = {"status": "pending"}
+    data["_pending"] = {"group_id": group_id, "group_name": group_name}
     _save(data)
+
+
+def get_pending() -> dict | None:
+    """Returns {group_id, group_name} of the group awaiting policy, or None."""
+    return _load().get("_pending")
 
 
 def activate(group_id: str, mention_only: bool):
     data = _load()
     data[group_id] = {"status": "active", "mention_only": mention_only}
+    if data.get("_pending", {}).get("group_id") == group_id:
+        del data["_pending"]
     _save(data)
 
 
 def is_mention_only(group_id: str) -> bool:
     return _load().get(group_id, {}).get("mention_only", False)
+
+
+def new_group_message(group_name: str) -> str:
+    return (
+        f"I was invited to a new group: *{group_name}*\n\n"
+        "What policy should I use?\n"
+        "*1.* Reply only when @mentioned\n"
+        "*2.* Reply to all messages\n\n"
+        "Reply *1* or *2*."
+    )

@@ -14,7 +14,8 @@ from gemini_client import process_message
 from history_manager import append_message, HISTORIES_DIR
 from cost_tracker import COST_LOGS_DIR
 from policy_manager import (
-    SETUP_MESSAGE, get_status, set_pending, activate, is_mention_only
+    is_main_group, get_status, set_pending, get_pending,
+    activate, is_mention_only, new_group_message, MAIN_GROUP_ID,
 )
 
 WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://whatsapp-service:3000")
@@ -44,6 +45,7 @@ class IncomingMessage(BaseModel):
 
 class GroupJoined(BaseModel):
     group_id: str
+    group_name: str
 
 
 async def _send(group_id: str, text: str, buttons: list | None = None):
@@ -60,10 +62,11 @@ async def _send(group_id: str, text: str, buttons: list | None = None):
 
 @app.post("/group-joined")
 async def group_joined(body: GroupJoined):
-    group_id = body.group_id
-    if get_status(group_id) == "new":
-        set_pending(group_id)
-        await _send(group_id, SETUP_MESSAGE)
+    if is_main_group(body.group_id):
+        return {"ok": True}
+    if get_status(body.group_id) == "new" and MAIN_GROUP_ID:
+        set_pending(body.group_id, body.group_name)
+        await _send(MAIN_GROUP_ID, new_group_message(body.group_name))
     return {"ok": True}
 
 
@@ -77,31 +80,37 @@ async def webhook(msg: IncomingMessage):
     # Save to history always
     await append_message(msg.group_id, msg.sender, msg.text, msg.timestamp)
 
-    status = get_status(msg.group_id)
+    # Main group: check if this is a pending policy reply, then process normally
+    if is_main_group(msg.group_id):
+        pending = get_pending()
+        if pending and msg.text.strip() in ("1", "2"):
+            mention_only = msg.text.strip() == "1"
+            activate(pending["group_id"], mention_only)
+            label = "@mention only" if mention_only else "all messages"
+            await _send(MAIN_GROUP_ID, f"Policy set for *{pending['group_name']}*: {label} ✅")
+            return {"ok": True}
+        # Fall through to normal AI processing for Main group
 
-    # No policy yet — send setup message and wait
-    if status == "new":
-        set_pending(msg.group_id)
-        await _send(msg.group_id, SETUP_MESSAGE)
-        return {"ok": True}
+    else:
+        status = get_status(msg.group_id)
 
-    # Pending — only accept policy setup replies
-    if status == "pending":
-        clean = msg.text.strip()
-        if clean == "1":
-            activate(msg.group_id, mention_only=True)
-            await _send(msg.group_id, "Got it! I'll only respond when @mentioned. ✅")
-        elif clean == "2":
-            activate(msg.group_id, mention_only=False)
-            await _send(msg.group_id, "Got it! I'll respond to all messages. ✅")
-        return {"ok": True}
+        # New group — notify Main and wait
+        if status == "new":
+            if MAIN_GROUP_ID:
+                # Fetch group name not available here; use group_id as fallback
+                set_pending(msg.group_id, msg.group_id)
+                await _send(MAIN_GROUP_ID, new_group_message(msg.group_id))
+            return {"ok": True}
 
-    # Active — apply policies
-    # Policy 1: mention-only
-    if is_mention_only(msg.group_id) and not msg.is_bot_mentioned:
-        return {"ok": True}
+        # Pending — ignore all messages until policy set via Main
+        if status == "pending":
+            return {"ok": True}
 
-    # Generate response
+        # Active — apply policy 1 (mention-only)
+        if is_mention_only(msg.group_id) and not msg.is_bot_mentioned:
+            return {"ok": True}
+
+    # Generate AI response
     try:
         reply = await process_message(msg.group_id, msg.sender, msg.text)
     except Exception as e:
@@ -112,7 +121,6 @@ async def webhook(msg: IncomingMessage):
     if _latest_seq.get(msg.group_id) != seq:
         return {"ok": True}
 
-    # Send reply
     if isinstance(reply, dict):
         await _send(msg.group_id, reply["text"], reply.get("buttons"))
     else:
