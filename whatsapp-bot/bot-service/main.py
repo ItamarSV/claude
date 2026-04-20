@@ -17,7 +17,7 @@ from history_manager import append_message, read_history_since, HISTORIES_DIR
 from cost_tracker import COST_LOGS_DIR
 from policy_manager import (
     is_main_group, get_status, set_pending, get_pending,
-    activate, is_mention_only, get_group_name, get_all_active_groups,
+    activate, is_mention_only, get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
 )
 
@@ -53,6 +53,18 @@ class IncomingMessage(BaseModel):
 class GroupJoined(BaseModel):
     group_id: str
     group_name: str
+
+
+async def _fetch_and_cache_group_name(group_id: str):
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{WHATSAPP_SERVICE_URL}/group-name", params={"group_id": group_id})
+            if r.status_code == 200:
+                name = r.json().get("name")
+                if name and name != group_id:
+                    set_group_name(group_id, name)
+    except Exception:
+        pass
 
 
 async def _send(group_id: str, text: str, buttons: list | None = None):
@@ -111,6 +123,10 @@ async def webhook(msg: IncomingMessage):
         # Pending — ignore all messages until policy set via Main
         if status == "pending":
             return {"ok": True}
+
+        # Backfill group name if missing
+        if get_group_name(msg.group_id) == msg.group_id:
+            await _fetch_and_cache_group_name(msg.group_id)
 
         # Active — apply policy 1 (mention-only)
         awaiting = msg.group_id in _awaiting_reply

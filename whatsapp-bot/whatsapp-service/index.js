@@ -198,6 +198,18 @@ app.get('/qr', async (_req, res) => {
   }
 });
 
+app.get('/group-name', async (req, res) => {
+  const { group_id } = req.query;
+  if (!group_id) return res.status(400).json({ error: 'group_id required' });
+  if (!sock) return res.status(503).json({ error: 'WhatsApp not connected' });
+  try {
+    const meta = await sock.groupMetadata(group_id);
+    res.json({ name: meta.subject || group_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => console.log(`WhatsApp service listening on port ${PORT}`));

@@ -53,6 +53,13 @@ def get_group_name(group_id: str) -> str:
     return _load().get(group_id, {}).get("name", group_id)
 
 
+def set_group_name(group_id: str, name: str):
+    data = _load()
+    if group_id in data:
+        data[group_id]["name"] = name
+        _save(data)
+
+
 def get_all_active_groups() -> list[tuple[str, str]]:
     """Returns list of (group_id, display_name) for all active non-main groups."""
     data = _load()
