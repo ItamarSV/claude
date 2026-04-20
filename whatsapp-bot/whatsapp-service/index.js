@@ -4,6 +4,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  proto,
 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const axios = require('axios');
@@ -71,10 +72,20 @@ async function connectToWhatsApp() {
 
       if (msg.key.fromMe) continue;
 
-      const text =
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        null;
+      // Extract text from regular message or button response
+      let text = null;
+      const buttonResponse = msg.message.interactiveResponseMessage?.nativeFlowResponseMessage;
+      if (buttonResponse) {
+        try {
+          const params = JSON.parse(buttonResponse.paramsJson || '{}');
+          text = params.id || null;
+        } catch (_) {}
+      } else {
+        text =
+          msg.message.conversation ||
+          msg.message.extendedTextMessage?.text ||
+          null;
+      }
 
       if (!text) continue;
 
@@ -99,7 +110,7 @@ const app = express();
 app.use(express.json());
 
 app.post('/send', async (req, res) => {
-  const { group_id, text } = req.body;
+  const { group_id, text, buttons } = req.body;
   if (!group_id || !text) {
     return res.status(400).json({ error: 'group_id and text are required' });
   }
@@ -107,7 +118,22 @@ app.post('/send', async (req, res) => {
     return res.status(503).json({ error: 'WhatsApp not connected' });
   }
   try {
-    await sock.sendMessage(group_id, { text });
+    if (buttons && buttons.length > 0) {
+      const interactiveMsg = proto.Message.fromObject({
+        interactiveMessage: {
+          body: { text },
+          nativeFlowMessage: {
+            buttons: buttons.map(b => ({
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({ display_text: b.text, id: b.id }),
+            })),
+          },
+        },
+      });
+      await sock.relayMessage(group_id, interactiveMsg, {});
+    } else {
+      await sock.sendMessage(group_id, { text });
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('Failed to send message:', err.message);

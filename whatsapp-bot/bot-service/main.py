@@ -46,11 +46,17 @@ async def webhook(msg: IncomingMessage):
         raise HTTPException(status_code=500, detail=str(e))
 
     # Send reply back via whatsapp-service
+    payload = {"group_id": msg.group_id}
+    if isinstance(reply, dict):
+        payload.update(reply)
+    else:
+        payload["text"] = reply
+
     async with httpx.AsyncClient(timeout=30) as client:
         try:
             await client.post(
                 f"{WHATSAPP_SERVICE_URL}/send",
-                json={"group_id": msg.group_id, "text": reply},
+                json=payload,
             )
         except Exception as e:
             print(f"Failed to send reply: {e}")

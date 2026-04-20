@@ -62,11 +62,15 @@ _pending_web_search: dict[str, str] = {}
 
 
 async def process_message(group_id: str, sender: str, text: str) -> str:
-    # Check if this is a "yes" reply to a pending web search
+    # Check if this is a reply to a pending web search confirmation
     if group_id in _pending_web_search:
-        if text.strip().lower() in ("yes", "yeah", "sure", "yep", "כן", "אוקי", "ok"):
+        clean = text.strip().lower()
+        if clean in ("yes", "yeah", "sure", "yep", "כן", "אוקי", "ok", "web_search_yes"):
             original = _pending_web_search.pop(group_id)
             return await _web_search_call(group_id, original)
+        elif clean in ("no", "nope", "לא", "web_search_no"):
+            _pending_web_search.pop(group_id, None)
+            return "Got it, skipping the web search."
         else:
             _pending_web_search.pop(group_id, None)
 
@@ -99,7 +103,13 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
 
             if fc.name == "request_web_search":
                 _pending_web_search[group_id] = user_message
-                return "I need internet access to answer this accurately. Want me to search the web? Reply *yes* to proceed."
+                return {
+                    "text": "I need internet access to answer this accurately. Want me to search the web?",
+                    "buttons": [
+                        {"id": "web_search_yes", "text": "🔍 Yes, search"},
+                        {"id": "web_search_no", "text": "❌ No thanks"},
+                    ],
+                }
 
     return _extract_text(response)
 
