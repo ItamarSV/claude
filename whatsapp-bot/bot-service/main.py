@@ -122,17 +122,14 @@ async def webhook(msg: IncomingMessage):
     if msg.text.strip().lower().startswith("/summarize"):
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
         if is_main_group(msg.group_id):
-            active_groups = get_all_active_groups()
-            print(f"[summarize] active groups: {[(gid, name) for gid, name in active_groups]}")
             parts = []
-            for gid, name in active_groups:
+            for gid, name in get_all_active_groups():
                 chunk = read_history_since(gid, today_start)
-                print(f"[summarize] group={name} ({gid}) lines={len(chunk.splitlines()) if chunk else 0}")
                 if chunk:
                     parts.append(f"=== {name} ===\n{chunk}")
             combined = "\n\n".join(parts) if parts else None
             if not combined:
-                reply = f"No activity in any group today. (Checked {len(active_groups)} groups)"
+                reply = "No activity in any group today."
             else:
                 reply = await summarize_text(
                     msg.group_id,
