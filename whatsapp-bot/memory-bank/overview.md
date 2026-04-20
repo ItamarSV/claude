@@ -13,13 +13,13 @@ whatsapp-service  (Node.js, port 3000)
       │  HTTP POST /webhook
       ▼
 bot-service       (Python/FastAPI, port 8000)
-      │  google-generativeai SDK
+      │  google-genai SDK
       ▼
-Gemini 1.5 Pro  ──► Google Search grounding (real-time info)
-                └──► get_group_history tool (reads .txt file)
+gemini-2.5-flash  ──► GoogleSearch built-in tool (real-time info)
+                  └──► get_group_history function declaration (reads .txt file)
 ```
 
-Both services run in Docker on a GCP VM, connected on a private Docker network.
+Both services run as systemd units on a GCP VM (no Docker).
 
 ## Key Decisions
 
@@ -31,14 +31,18 @@ Both services run in Docker on a GCP VM, connected on a private Docker network.
 | History routing | Gemini tool use | Model decides when history is needed; no double API calls for simple questions |
 | Cost tracking | Per-call log in monthly .txt | Auditable, readable, easy to parse for future monthly report |
 
+## Admin Commands (Main group only)
+| Command | What it does |
+|---|---|
+| `/summarize` | Summarizes today's conversation in the current group; in Main group summarizes all groups |
+| `/usage` | Shows this month's Gemini API call count, token usage, and cost per group (Main group only) |
+
 ## Known Limitations
 - Baileys is unofficial — small risk of WhatsApp banning the number
 - History files grow unboundedly (not a problem for years given 1M token window)
-- Bot responds to every message in every group it's added to (no per-group policy yet)
 - No support for images, voice, or other media — text only
+- Interactive buttons silently dropped by WhatsApp servers — using plain-text numbered list (1/2) instead
 
 ## Future Ideas
 - Monthly cost report sent automatically via WhatsApp
-- Per-group bot policy (e.g., only respond when tagged)
-- Admin commands (e.g., "!summary", "!costs")
 - Switch to official Meta API if group support improves
