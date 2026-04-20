@@ -11,7 +11,7 @@ from cost_tracker import record_call
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-MODEL = "gemini-1.5-pro"
+MODEL = "gemini-2.5-pro"
 
 SYSTEM_PROMPT = """You are a helpful assistant in a WhatsApp group chat.
 You have access to Google Search for real-time information (weather, news, facts, etc.).
