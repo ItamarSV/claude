@@ -93,6 +93,7 @@ sudo systemctl start whatsapp-service bot-service
 | Variable | Description |
 |---|---|
 | `GEMINI_API_KEY` | From Google AI Studio — required |
+| `MAIN_GROUP_ID` | JID of the admin/control group (e.g. `120363428078252617@g.us`) — the Main group |
 
 ---
 
@@ -127,8 +128,14 @@ curl http://localhost:8000/health
 sudo systemctl stop whatsapp-service
 rm -rf ~/claude/whatsapp-bot/whatsapp-service/.baileys_auth
 sudo systemctl start whatsapp-service
-# Open http://34.165.231.71:3000/qr and scan again
+# Open http://34.165.231.71:3000/qr and scan with WhatsApp Business app
 ```
+Bot number is registered as **WhatsApp Business** (+972559925787). Must scan using the Business app, not regular WhatsApp.
+
+**Bot not responding to @mentions (mention_only policy):**
+- Check logs for `isBotMentioned=false`
+- Likely cause: `botLid=null` — LID not loaded from `state.creds.me.lid`
+- Fix: restart whatsapp-service (re-reads creds on startup)
 
 **Gemini model issues:**
 - `gemini-2.5-flash` = current working model

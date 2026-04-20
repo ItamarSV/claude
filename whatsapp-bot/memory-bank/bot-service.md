@@ -1,15 +1,46 @@
 # Bot Service
 
-**Files:** `bot-service/main.py`, `gemini_client.py`, `history_manager.py`, `cost_tracker.py`
+**Files:** `bot-service/main.py`, `gemini_client.py`, `history_manager.py`, `cost_tracker.py`, `policy_manager.py`
 **Runtime:** Python 3.12, FastAPI + Uvicorn, runs in a `venv/`
 
 ## Webhook Flow (`main.py`)
-1. `POST /webhook` receives `{group_id, sender, text, timestamp}` from whatsapp-service
-2. `append_message()` writes the message to the group's history file immediately
-3. `process_message()` calls Gemini and gets a reply
-4. Reply is POSTed to whatsapp-service `POST /send`
+1. `POST /webhook` receives `{group_id, sender, text, timestamp, is_bot_mentioned}` from whatsapp-service
+2. Assigns a per-group sequence number (policy 2 — last-message-only)
+3. `append_message()` writes the message to the group's history file immediately
+4. Checks group policy (see Policy System below) — may skip processing
+5. `process_message()` calls Gemini and gets a reply
+6. Checks sequence number again — skips reply if a newer message arrived (policy 2)
+7. Reply is POSTed to whatsapp-service `POST /send`
 
 History is always saved regardless of whether the bot can respond (Gemini errors don't lose history).
+
+## Policy System (`policy_manager.py`)
+
+**Admin/control channel:** `Main` group (`120363428078252617@g.us`) — always active, never prompts for policy setup. All new-group management happens here.
+
+**Per-group states** stored in `group_policies.json`:
+- `new` — never seen this group; bot will notify Main and wait
+- `pending` — notified Main, waiting for policy reply; bot ignores all messages from this group
+- `active` — policy set, bot operates normally
+
+**New group flow:**
+1. Bot added to group → `group-participants.update` → POST `/group-joined` with group name
+2. Bot sends to Main: *"I was invited to [group name]. What policy? 1=@mention only, 2=all messages"*
+3. User replies `1` or `2` in Main → policy activated for that group
+
+**Policy enforcement (active groups):**
+- Policy 1 (`mention_only`): skip if `is_bot_mentioned` is false
+- Policy 2 (always on): skip reply if a newer message arrived during Gemini processing
+
+**`/group-joined` endpoint:** called by whatsapp-service when bot is added to a group. Idempotent — only acts if status is `new`.
+
+**`group_policies.json` structure:**
+```json
+{
+  "_pending": {"group_id": "120363xyz@g.us", "group_name": "Cooking Club"},
+  "120363abc@g.us": {"status": "active", "mention_only": true}
+}
+```
 
 ## Gemini SDK
 Uses `google-genai` package (NOT `google-generativeai` — the old SDK).
@@ -20,19 +51,26 @@ Import: `from google import genai`
 Current model: `gemini-2.5-flash` (free tier available).
 
 ## Gemini Tool Use Pattern (`gemini_client.py`)
-Only the `get_group_history` function declaration is registered (no search grounding — incompatible).
+Two function declarations registered: `get_group_history` and `request_web_search`.
 
-**Two-phase call pattern:**
-1. **First call:** send the user's message to Gemini with `get_group_history` tool available
-2. Check the response parts for a `function_call` named `get_group_history`
-3. **If tool called:** load the history file → make a second call with history injected as plain text context (no tools on second call)
-4. **If no tool call:** use the first response directly
+**Three-phase call pattern:**
+1. **First call:** send the user's message with both function declarations available
+2. Check response parts for a `function_call`:
+   - `get_group_history` → load history file → second call with history injected as plain text (no tools)
+   - `request_web_search` → store original message in `_pending_web_search[group_id]`, return a dict with buttons asking the user to confirm
+3. **If no tool call:** use the first response directly
 
-Gemini decides autonomously whether history is needed. "What did we decide last week?" → calls `get_group_history`. Simple questions → answers directly.
+**Web search confirmation flow:**
+- `process_message()` returns `{"text": "...", "buttons": [{"id": "web_search_yes", "text": "🔍 Yes, search"}, {"id": "web_search_no", "text": "❌ No thanks"}]}`
+- `main.py` merges this dict into the `/send` payload → whatsapp-service sends interactive buttons
+- User clicks a button → Baileys extracts the button ID and forwards it as text to bot-service
+- `process_message()` checks `_pending_web_search` and routes: `web_search_yes` → triggers `_web_search_call()`, `web_search_no` → dismisses
 
-## Google Search
-Currently disabled — incompatible with function declarations in gemini-2.5-flash.
-To re-enable: either use search-only calls (no function declarations) or implement a custom `web_search` function declaration that calls an external search API (Brave, Tavily, etc.).
+**`_web_search_call()`:** separate Gemini call using only `GoogleSearch` built-in tool (no function declarations — they conflict).
+
+**`_pending_web_search`:** per-group dict `{group_id: original_user_message}` — cleared on any confirmation response or unrelated message.
+
+Gemini decides autonomously whether history or search is needed.
 
 ## History Files (`history_manager.py`)
 - Stored in `group_histories/{sanitized_group_id}.txt`
