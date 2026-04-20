@@ -6,7 +6,7 @@ from google.genai.types import (
     FunctionDeclaration,
     GoogleSearch,
 )
-from history_manager import read_history
+from history_manager import read_history, read_recent_history
 from cost_tracker import record_call
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -14,18 +14,18 @@ client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = """You are a helpful assistant in a WhatsApp group chat.
-You have a tool to read the full chat history of this group when questions require it.
-You also have a tool to request internet access when you need real-time or current information
-(news, weather, live prices, recent events, etc.) that you don't have in your training data.
+You will receive the recent conversation (last 2 hours) as context before each message — use it to stay aware of the ongoing discussion.
+You also have a tool to read the full chat history when someone asks about something older than 2 hours.
+You also have a tool to request internet access when you need real-time or current information (news, weather, live prices, recent events, etc.).
 Keep responses concise and conversational — this is a chat, not a document.
-When using chat history, reference specific details to show you actually read it."""
+Always reply in the same language as the message you received."""
 
 _history_func = FunctionDeclaration(
     name="get_group_history",
     description=(
-        "Retrieve the full chat history of the current WhatsApp group. "
-        "Call this when the question references past conversations, "
-        "decisions, lists, or anything that happened in this group before."
+        "Retrieve the full chat history of this group (beyond the last 2 hours). "
+        "Call this when the question references something older — past decisions, "
+        "lists, or events that happened more than 2 hours ago."
     ),
     parameters={
         "type": "OBJECT",
@@ -76,9 +76,15 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
 
     user_message = f"{sender}: {text}"
 
+    recent = read_recent_history(group_id, hours=2)
+    contents = (
+        f"Recent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
+        if recent else user_message
+    )
+
     response = client.models.generate_content(
         model=MODEL,
-        contents=user_message,
+        contents=contents,
         config=_base_config,
     )
     _track_cost(group_id, response)
@@ -95,7 +101,7 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
                 )
                 followup = client.models.generate_content(
                     model=MODEL,
-                    contents=f"{history_context}Now answer this message:\n{user_message}",
+                    contents=f"{history_context}Now answer this message:\n{contents}",
                     config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
                 )
                 _track_cost(group_id, followup)

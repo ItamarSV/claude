@@ -1,7 +1,7 @@
 import asyncio
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HISTORIES_DIR = Path(__file__).parent / "group_histories"
@@ -40,3 +40,19 @@ def read_history(group_id: str) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def read_recent_history(group_id: str, hours: int = 2) -> str:
+    path = _group_file(group_id)
+    if not path.exists():
+        return ""
+    cutoff = datetime.now() - timedelta(hours=hours)
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            ts = datetime.strptime(line[1:17], "%Y-%m-%d %H:%M")
+            if ts >= cutoff:
+                lines.append(line)
+        except (ValueError, IndexError):
+            continue
+    return "\n".join(lines)
