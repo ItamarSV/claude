@@ -28,7 +28,7 @@ History is always saved regardless of whether the bot can respond (Gemini errors
 - `active` — policy set, bot operates normally
 
 **New group flow:**
-1. Bot added to group → `group-participants.update` → POST `/group-joined` with group name
+1. Bot added to group → `groups.upsert` or `group-participants.update action=add` → POST `/group-joined` with group name
 2. Bot sends to Main: *"I was invited to [group name]. What policy? 1=@mention only, 2=all messages, 3=listener only"*
 3. User replies `1`, `2`, or `3` in Main → policy activated for that group
 
@@ -77,8 +77,8 @@ Four function declarations registered: `get_group_history`, `request_web_search`
 
 **Web search confirmation flow:**
 - `process_message()` returns `{"text": "...", "buttons": [{"id": "web_search_yes", "text": "🔍 Yes, search"}, {"id": "web_search_no", "text": "❌ No thanks"}]}`
-- `main.py` merges this dict into the `/send` payload → whatsapp-service sends interactive buttons
-- User clicks a button → Baileys extracts the button ID and forwards it as text to bot-service
+- `main.py` merges this dict into the `/send` payload → whatsapp-service renders as plain-text numbered list (native buttons are silently dropped by WhatsApp servers)
+- User replies with the button ID text (`web_search_yes` / `web_search_no`) or a button tap if somehow received
 - `process_message()` checks `_pending_web_search` and routes: `web_search_yes` → triggers `_web_search_call()`, `web_search_no` → dismisses
 
 **`_web_search_call()`:** separate Gemini call using only `GoogleSearch` built-in tool (no function declarations — they conflict).
@@ -154,12 +154,12 @@ Handled in `main.py` before calling `process_message()`, so they bypass Gemini e
 | `/reminders cancel #id` | Any group | Cancels reminder (own group only). Main can cancel any. |
 
 ## whatsapp-service endpoints (relevant to bot-service)
-- `POST /send` — now accepts `mention_jids: [jid]` for @mentions when firing reminders
+- `POST /send` — accepts `mention_jids: [jid]` for @mentions when firing reminders
 - `GET /group-participants?group_id=` — returns `[{jid, name}]` for reminder timezone computation
 - `GET /group-name?group_id=` — used for backfilling group names
-- Webhook now includes `sender_jid` (from `msg.key.participant`) alongside `sender` (display name)
+- Webhook payload includes `sender_jid` (from `msg.key.participant`) alongside `sender` (display name)
 
 ## Python Environment
 Dependencies installed in `venv/`. Systemd service uses `venv/bin/uvicorn` directly.
 To reinstall: `cd bot-service && venv/bin/pip install -r requirements.txt`
-New packages added: `apscheduler>=3.10`, `SQLAlchemy`, `tzdata`
+Key packages: `fastapi`, `uvicorn`, `google-genai`, `httpx`, `apscheduler>=3.10`, `SQLAlchemy`, `tzdata`

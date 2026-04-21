@@ -15,8 +15,9 @@ whatsapp-service  (Node.js, port 3000)
 bot-service       (Python/FastAPI, port 8000)
       │  google-genai SDK
       ▼
-gemini-2.5-flash  ──► GoogleSearch built-in tool (real-time info)
+gemini-2.5-flash  ──► GoogleSearch built-in tool (real-time info, separate call)
                   ├──► get_group_history function declaration (reads .txt file)
+                  ├──► request_web_search function declaration (triggers search confirmation)
                   ├──► set_reminder function declaration (schedules via APScheduler)
                   └──► update_timezone function declaration (updates user_timezones.json)
 ```
