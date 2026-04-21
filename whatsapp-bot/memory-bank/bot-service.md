@@ -4,17 +4,20 @@
 **Runtime:** Python 3.12, FastAPI + Uvicorn, runs in a `venv/`
 
 ## Webhook Flow (`main.py`)
-1. `POST /webhook` receives `{group_id, sender, sender_jid, text, timestamp, is_bot_mentioned, is_reply_to_bot}` from whatsapp-service
+1. `POST /webhook` receives `{group_id, sender, sender_jid, text, timestamp, is_bot_mentioned, is_reply_to_bot, audio_data?, audio_mime?}` from whatsapp-service
 2. Assigns a per-group sequence number (policy 2 — last-message-only)
-3. `append_message()` writes the user message to the group's history file immediately
-4. Checks group policy (see Policy System below) — may skip processing
-5. Checks reminder session (`_pending_reminder`) — handles yes/no confirmation and repeat flow
-6. Checks slash commands (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini
-7. `process_message()` calls Gemini and gets a reply
-8. Checks sequence number again — skips reply if a newer message arrived (policy 2)
-9. Handles special Gemini reply types: `set_reminder`, `update_timezone`, web search dict
-10. Reply is POSTed to whatsapp-service `POST /send`
-11. Bot reply is also saved to history via `append_message()` (sender = "Bot")
+3. **If `audio_data` present and no text:** calls `transcribe_audio()` → replaces `msg.text` with `[voice] <transcription>` before any further processing
+4. `append_message()` writes the user message (or transcription) to the group's history file immediately
+5. Checks group policy (see Policy System below) — may skip processing
+6. `_awaiting_reply` check: mention-only groups bypass the mention filter for one message (used for reminder confirmations, web search responses)
+7. Checks reminder session (`_pending_reminder`) — handles yes/no confirmation and repeat flow
+8. Checks slash commands (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini
+9. Fetches pending reminders for group → formats as context string for Gemini
+10. `process_message()` calls Gemini and gets a reply
+11. Checks sequence number again — skips reply if a newer message arrived (policy 2)
+12. Handles special Gemini reply types: `set_reminder`, `update_timezone`, `cancel_reminder`, web search dict
+13. Reply is POSTed to whatsapp-service `POST /send`
+14. Bot reply is also saved to history via `append_message()` (sender = "Bot")
 
 History is always saved regardless of whether the bot can respond (Gemini errors don't lose history).
 
@@ -66,10 +69,10 @@ Import: `from google import genai`
 Current model: `gemini-2.5-flash` (free tier available).
 
 ## Gemini Tool Use Pattern (`gemini_client.py`)
-Four function declarations registered: `get_group_history`, `request_web_search`, `set_reminder`, `update_timezone`.
+Five function declarations registered: `get_group_history`, `request_web_search`, `set_reminder`, `update_timezone`, `cancel_reminder`.
 
 **Three-phase call pattern:**
-1. **First call:** send the user's message with both function declarations available
+1. **First call:** send the user's message with all function declarations available
 2. Check response parts for a `function_call`:
    - `get_group_history` → load history file → second call with history injected as plain text (no tools)
    - `request_web_search` → store original message in `_pending_web_search[group_id]`, return a dict with buttons asking the user to confirm
@@ -89,9 +92,30 @@ Four function declarations registered: `get_group_history`, `request_web_search`
 
 **`update_timezone`** → returns `{"type": "update_timezone", "timezone"}` — resolved via `resolve_timezone()` Gemini call, saved to `user_timezones.json` by JID.
 
+**`cancel_reminder`** → returns `{"type": "cancel_reminder", "reminder_id"}` — Gemini picks the right ID from the pending reminders context injected into every message. `main.py` calls `_cancel_reminder_job(rid, allowed_group_id=allowed)` where `allowed` is `None` for Main group (can cancel any) or the current `group_id` (can only cancel own).
+
 **Local time context** is injected into every `process_message` call: `[Today is Monday 2026-04-21, current local time is 17:32 (Asia/Jerusalem)]` using the sender's timezone from `user_timezones.json`. This ensures Gemini resolves relative times ("in 5 minutes", "tonight") correctly in the user's local time, not UTC. The returned `iso_time` is then treated as naive local time in the setter's timezone.
 
-Gemini decides autonomously whether history or search is needed.
+**Pending reminders context** is injected into every `process_message` call as a formatted list of active reminders for that group (id, fire time, message). This gives Gemini the information it needs to cancel the right reminder by description.
+
+Gemini decides autonomously whether history, search, or a tool action is needed.
+
+## Gemini Utility Functions (`gemini_client.py`)
+
+**`transcribe_audio(group_id, audio_data_b64, audio_mime) -> str`**
+Sends the audio as inline bytes to Gemini (`genai_types.Part(inline_data=genai_types.Blob(...))`). Returns the spoken words. Cost is tracked. Called from `main.py` before `append_message` so history and Gemini always see the transcribed text, not raw audio.
+
+**`resolve_repeat_interval(text) -> dict | None`**
+Asks Gemini to convert a natural language repeat schedule to an APScheduler trigger dict. Returns:
+- `{"type": "cron", "day_of_week": "mon,sun"}` for day-of-week patterns
+- `{"type": "interval", "weeks": 1}` for fixed intervals
+Returns `None` if parsing fails. Used in `_schedule_reminder_jobs` and the `awaiting_repeat` handler.
+
+**`resolve_timezone(text) -> str`**
+Converts city/region name to IANA timezone (e.g. "London" → "Europe/London").
+
+**`summarize_text(group_id, prompt) -> str`**
+Generic Gemini call for `/summarize` command output.
 
 ## History Files (`history_manager.py`)
 - Stored in `group_histories/{sanitized_group_id}.txt`
@@ -121,12 +145,22 @@ Each call appends one line to `cost_logs/YYYY-MM.txt`:
 
 ## Reminders (`reminders.py`)
 - **APScheduler** `AsyncIOScheduler` with `SQLAlchemyJobStore` → SQLite (`reminders.db`) — survives restarts
-- `add_reminder(group_id, message, fire_at_utc, mention_jids, display_tz, repeat_interval)` → returns job ID
-- `fire_reminder(group_id, message, mention_jids)` — async job function, calls whatsapp-service `/send` with `mention_jids`
-- `list_reminders(group_id=None)` — None = all groups
-- `cancel_reminder(short_id, allowed_group_id=None)` — validates group ownership unless `allowed_group_id=None`
-- Repeat intervals: `"weekly"`, `"daily"`, `"every N minutes"`, `"monthly"`, `"yearly"` → mapped to `IntervalTrigger`
+- `add_reminder(group_id, message, fire_at_utc, mention_jids, display_tz, repeat_interval, repeat_spec)` → returns job ID
+- `fire_reminder(group_id, message, mention_jids, repeat_interval)` — async job function; `repeat_interval` stored in kwargs so it can be read back for display
+- `list_reminders(group_id=None)` — None = all groups; returns list with `repeat_interval` field (reads from kwargs if stored, falls back to `_trigger_to_interval`)
+- `cancel_reminder(short_id, allowed_group_id=None)` — validates group ownership unless `allowed_group_id=None` (Main can pass `None` to cancel any group's reminder)
 - Scheduler started/stopped in FastAPI lifespan
+
+**Trigger building (`_build_trigger`):** prefers `repeat_spec` dict (from Gemini), falls back to `repeat_interval` string, then `DateTrigger` for one-time:
+- `repeat_spec = {"type": "cron", "day_of_week": "mon,sun"}` → `CronTrigger` (supports day-of-week patterns like "every Monday and Sunday")
+- `repeat_spec = {"type": "interval", "weeks": 1}` → `IntervalTrigger`
+- `repeat_interval` string ("weekly", "daily", "every 30 minutes") → `IntervalTrigger` via `_repeat_trigger()`
+
+**`_trigger_to_interval(trigger)`:** reads an `IntervalTrigger`'s timedelta and returns a human string ("daily", "weekly", "monthly", "yearly", "every N hours/minutes"). Used to display repeat info for reminders created before `repeat_interval` was stored in kwargs.
+
+**Access control (enforced in `main.py`):**
+- **Main group**: can list all reminders across all groups, cancel any reminder (`allowed_group_id=None`)
+- **Other groups**: can only list their own reminders, can only cancel their own reminders (`allowed_group_id=group_id`)
 
 **Reminder session state** in `main.py` (`_pending_reminder[group_id]`):
 - `awaiting_confirm` — bot asked "set reminder?", waiting for yes/no
@@ -150,8 +184,8 @@ Handled in `main.py` before calling `process_message()`, so they bypass Gemini e
 |---|---|---|
 | `/summarize` | Any group | Summarizes today's messages in that group via Gemini. In Main: summarizes all active groups combined. |
 | `/usage` | Main group only | Returns this month's Gemini call count, token usage, and cost, broken down per group. |
-| `/reminders` | Any group | Lists pending reminders for that group. In Main: lists all groups. |
-| `/reminders cancel #id` | Any group | Cancels reminder (own group only). Main can cancel any. |
+| `/reminders` | Any group | Lists pending reminders for that group (with repeat interval if set). In Main: lists all groups. |
+| `/reminders cancel #id` | Any group | Cancels reminder (own group only). Main can cancel any reminder. |
 
 ## whatsapp-service endpoints (relevant to bot-service)
 - `POST /send` — accepts `mention_jids: [jid]` for @mentions when firing reminders

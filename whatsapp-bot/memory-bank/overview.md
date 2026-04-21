@@ -19,7 +19,8 @@ gemini-2.5-flash  ──► GoogleSearch built-in tool (real-time info, separate
                   ├──► get_group_history function declaration (reads .txt file)
                   ├──► request_web_search function declaration (triggers search confirmation)
                   ├──► set_reminder function declaration (schedules via APScheduler)
-                  └──► update_timezone function declaration (updates user_timezones.json)
+                  ├──► update_timezone function declaration (updates user_timezones.json)
+                  └──► cancel_reminder function declaration (cancels by natural language description)
 ```
 
 Both services run as systemd units on a GCP VM (no Docker).
@@ -43,8 +44,10 @@ Both services run as systemd units on a GCP VM (no Docker).
 | `/reminders cancel #id` | Any group | Cancels a reminder (own group only; Main can cancel any) |
 
 **Natural language commands (via Gemini):**
-- `@bot remind me at 18:00 to call David` — sets a reminder with optional repeat
+- `@bot remind me at 18:00 to call David` — sets a reminder with optional repeat (supports day-of-week patterns like "every Monday and Sunday")
 - `@bot set my timezone to London` — updates the user's timezone across all groups
+- `@bot cancel the reminder about X` — cancels by description; Gemini identifies the right ID from context
+- Voice messages — transcribed by Gemini before processing; bot can reply to voice messages just like text
 
 ## Group Policies
 | Option | Mode | Behaviour |
@@ -67,7 +70,8 @@ Note: `action=add` does NOT reliably fire when the bot is re-added to a group it
 ## Known Limitations
 - Baileys is unofficial — small risk of WhatsApp banning the number
 - History files grow unboundedly (not a problem for years given 1M token window)
-- No support for images, voice, or other media — text only
+- No support for images or other media — text and voice only
+- Voice messages are transcribed; the transcription is stored in history as `[voice] <text>`
 - Interactive buttons silently dropped by WhatsApp servers — using plain-text numbered list (1/2) instead
 
 ## Future Ideas

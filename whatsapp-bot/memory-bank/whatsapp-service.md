@@ -28,14 +28,20 @@ On every incoming message the service checks:
 1. `type !== 'notify'` → skip (historical/status messages)
 2. `!jid.endsWith('@g.us')` → skip (not a group message)
 3. `msg.key.fromMe === true` → skip (bot's own message — prevents reply loops)
-4. No text content and no button response → skip (images, stickers, etc.)
+4. No text content, no audio, and no button response → skip (images, stickers, etc.)
 
 Text is extracted from: `conversation`, `extendedTextMessage.text`, or button clicks (`interactiveResponseMessage.nativeFlowResponseMessage.paramsJson` → `id` field).
+
+**Audio messages:** if no text, checks `msg.message.audioMessage` — downloads via `downloadMediaMessage`, base64-encodes, and forwards as `audio_data` + `audio_mime` in the webhook payload. bot-service transcribes it via Gemini before processing.
+
+**`contextInfo` extraction:** `is_bot_mentioned` and `is_reply_to_bot` are read from `contextInfo`, which can live under any message type (`extendedTextMessage`, `audioMessage`, `imageMessage`, `videoMessage`). All are checked so replies-via-voice-message work correctly.
 
 Every forwarded message includes:
 - `is_bot_mentioned: bool` — true if bot's JID in `mentionedJid`
 - `is_reply_to_bot: bool` — true if `contextInfo.participant` matches bot's JID
 - `sender_jid: str` — the sender's full JID (from `msg.key.participant`), used for timezone lookup in reminders
+- `audio_data: str` (optional) — base64-encoded audio buffer
+- `audio_mime: str` (optional) — e.g. `audio/ogg; codecs=opus`
 
 Filtering by mention is handled in bot-service based on per-group policy, not here.
 
