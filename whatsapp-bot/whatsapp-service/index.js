@@ -142,6 +142,7 @@ async function connectToWhatsApp() {
         await axios.post(`${BOT_SERVICE_URL}/webhook`, {
           group_id: jid,
           sender,
+          sender_jid: msg.key.participant || '',
           text: cleanText,
           timestamp,
           is_bot_mentioned: isBotMentioned,
@@ -166,9 +167,12 @@ app.post('/send', async (req, res) => {
     return res.status(503).json({ error: 'WhatsApp not connected' });
   }
   try {
+    const { mention_jids } = req.body;
     if (buttons && buttons.length > 0) {
       const lines = buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
       await sock.sendMessage(group_id, { text: `${text}\n\n${lines}\n\nReply *1* or *2*` });
+    } else if (mention_jids && mention_jids.length > 0) {
+      await sock.sendMessage(group_id, { text, mentions: mention_jids });
     } else {
       await sock.sendMessage(group_id, { text });
     }
@@ -195,6 +199,22 @@ app.get('/qr', async (_req, res) => {
     `);
   } catch (e) {
     res.status(500).send('Failed to generate QR image.');
+  }
+});
+
+app.get('/group-participants', async (req, res) => {
+  const { group_id } = req.query;
+  if (!group_id) return res.status(400).json({ error: 'group_id required' });
+  if (!sock) return res.status(503).json({ error: 'WhatsApp not connected' });
+  try {
+    const meta = await sock.groupMetadata(group_id);
+    const participants = meta.participants.map(p => ({
+      jid: p.id,
+      name: p.notify || p.id.split('@')[0],
+    }));
+    res.json({ participants });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -1,4 +1,5 @@
 import os
+import re
 from asyncio import Lock
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,31 +12,40 @@ from pydantic import BaseModel
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from gemini_client import process_message, summarize_text
-from cost_tracker import get_monthly_summary
+from gemini_client import process_message, summarize_text, resolve_timezone
+from cost_tracker import get_monthly_summary, COST_LOGS_DIR
 from history_manager import append_message, read_history_since, HISTORIES_DIR
-from cost_tracker import COST_LOGS_DIR
 from policy_manager import (
     is_main_group, get_status, set_pending, get_pending,
     activate, is_mention_only, get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
 )
+from reminders import scheduler, add_reminder, list_reminders, cancel_reminder
+from timezone_manager import (
+    get_user_timezone, set_user_timezone, is_valid_tz,
+    local_to_utc, utc_to_local, compute_reminder_jobs,
+)
 
 WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://whatsapp-service:3000")
 
-# Policy 2: per-group sequence counter — skip reply if a newer message arrived
 _latest_seq: dict[str, int] = {}
 _seq_lock = Lock()
-
-# Session: groups where the bot is awaiting a follow-up reply (bypass mention filter)
 _awaiting_reply: set[str] = set()
+
+# Reminder session: group_id -> session dict
+_pending_reminder: dict[str, dict] = {}
+
+YES_WORDS = {"yes", "yeah", "sure", "yep", "כן", "אוקי", "ok", "y", "yep", "sure"}
+NO_WORDS  = {"no", "nope", "לא", "n", "nah", "not"}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     HISTORIES_DIR.mkdir(exist_ok=True)
     COST_LOGS_DIR.mkdir(exist_ok=True)
+    scheduler.start()
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -44,6 +54,7 @@ app = FastAPI(lifespan=lifespan)
 class IncomingMessage(BaseModel):
     group_id: str
     sender: str
+    sender_jid: str = ""
     text: str
     timestamp: str
     is_bot_mentioned: bool = False
@@ -53,6 +64,31 @@ class IncomingMessage(BaseModel):
 class GroupJoined(BaseModel):
     group_id: str
     group_name: str
+
+
+async def _send(group_id: str, text: str, buttons: list | None = None, mention_jids: list | None = None):
+    payload = {"group_id": group_id, "text": text}
+    if buttons:
+        payload["buttons"] = buttons
+    if mention_jids:
+        payload["mention_jids"] = mention_jids
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            r = await client.post(f"{WHATSAPP_SERVICE_URL}/send", json=payload)
+            r.raise_for_status()
+        except Exception as e:
+            print(f"Failed to send message: {e}")
+
+
+async def _fetch_participants(group_id: str) -> list[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{WHATSAPP_SERVICE_URL}/group-participants", params={"group_id": group_id})
+            if r.status_code == 200:
+                return r.json().get("participants", [])
+    except Exception:
+        pass
+    return []
 
 
 async def _fetch_and_cache_group_name(group_id: str):
@@ -67,16 +103,68 @@ async def _fetch_and_cache_group_name(group_id: str):
         pass
 
 
-async def _send(group_id: str, text: str, buttons: list | None = None):
-    payload = {"group_id": group_id, "text": text}
-    if buttons:
-        payload["buttons"] = buttons
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            r = await client.post(f"{WHATSAPP_SERVICE_URL}/send", json=payload)
-            r.raise_for_status()
-        except Exception as e:
-            print(f"Failed to send message: {e}")
+def _is_yes(text: str) -> bool:
+    t = text.strip().lower()
+    return t in YES_WORDS or any(t.startswith(w) for w in YES_WORDS)
+
+
+def _is_no(text: str) -> bool:
+    t = text.strip().lower()
+    return t in NO_WORDS or any(t.startswith(w) for w in NO_WORDS)
+
+
+def _extract_repeat_interval(text: str) -> str | None:
+    t = text.lower()
+    m = re.search(r"every\s+(\d+)\s+minute", t)
+    if m:
+        return f"every {m.group(1)} minutes"
+    m = re.search(r"every\s+(\d+)\s+hour", t)
+    if m:
+        return f"every {m.group(1)} hours"
+    if re.search(r"every\s+day|daily|כל יום", t):
+        return "daily"
+    if re.search(r"every\s+week|weekly|כל שבוע|שבועי", t):
+        return "weekly"
+    if re.search(r"every\s+month|monthly|כל חודש|חודשי", t):
+        return "monthly"
+    if re.search(r"every\s+year|yearly|annually|כל שנה|שנתי", t):
+        return "yearly"
+    return None
+
+
+async def _schedule_reminder_jobs(group_id: str, session: dict) -> list[dict]:
+    fire_at_naive = datetime.fromisoformat(session["iso_time"])
+    setter_jid = session["created_by_jid"]
+    participants = await _fetch_participants(group_id)
+
+    if participants:
+        jobs = compute_reminder_jobs(participants, fire_at_naive, setter_jid)
+    else:
+        tz = get_user_timezone(setter_jid)
+        jobs = [{"fire_at_utc": local_to_utc(fire_at_naive, tz), "mention_jids": [], "display_tz": tz}]
+
+    scheduled = []
+    repeat = session.get("repeat_interval")
+    if repeat == "ask":
+        repeat = None
+
+    for job in jobs:
+        job_id = add_reminder(
+            group_id=group_id,
+            message=session["message"],
+            fire_at_utc=job["fire_at_utc"],
+            mention_jids=job["mention_jids"],
+            display_tz=job["display_tz"],
+            repeat_interval=repeat,
+        )
+        scheduled.append({**job, "job_id": job_id})
+
+    return scheduled
+
+
+def _format_fire_time(fire_at_utc: datetime, tz: str) -> str:
+    local = utc_to_local(fire_at_utc, tz)
+    return local.strftime("%a %b %d %H:%M")
 
 
 @app.post("/group-joined")
@@ -90,15 +178,12 @@ async def group_joined(body: GroupJoined):
 
 @app.post("/webhook")
 async def webhook(msg: IncomingMessage):
-    # Policy 2: assign sequence number
     async with _seq_lock:
         seq = _latest_seq.get(msg.group_id, 0) + 1
         _latest_seq[msg.group_id] = seq
 
-    # Save to history always
     await append_message(msg.group_id, msg.sender, msg.text, msg.timestamp)
 
-    # Main group: check if this is a pending policy reply, then process normally
     if is_main_group(msg.group_id):
         pending = get_pending()
         if pending and msg.text.strip() in ("1", "2"):
@@ -107,35 +192,100 @@ async def webhook(msg: IncomingMessage):
             label = "@mention only" if mention_only else "all messages"
             await _send(MAIN_GROUP_ID, f"Policy set for *{pending['group_name']}*: {label} ✅")
             return {"ok": True}
-        # Fall through to normal AI processing for Main group
-
     else:
         status = get_status(msg.group_id)
 
-        # New group — notify Main and wait
         if status == "new":
             if MAIN_GROUP_ID:
-                # Fetch group name not available here; use group_id as fallback
                 set_pending(msg.group_id, msg.group_id)
                 await _send(MAIN_GROUP_ID, new_group_message(msg.group_id))
             return {"ok": True}
 
-        # Pending — ignore all messages until policy set via Main
         if status == "pending":
             return {"ok": True}
 
-        # Backfill group name if missing
         if get_group_name(msg.group_id) == msg.group_id:
             await _fetch_and_cache_group_name(msg.group_id)
 
-        # Active — apply policy 1 (mention-only)
         awaiting = msg.group_id in _awaiting_reply
         if awaiting:
             _awaiting_reply.discard(msg.group_id)
         if is_mention_only(msg.group_id) and not msg.is_bot_mentioned and not msg.is_reply_to_bot and not awaiting:
             return {"ok": True}
 
-    # Usage command: "/usage" (Main group only)
+    # ── Reminder session handler ──────────────────────────────────────────────
+    if msg.group_id in _pending_reminder:
+        session = _pending_reminder[msg.group_id]
+        reply = None
+
+        if session["state"] == "awaiting_confirm":
+            if _is_yes(msg.text):
+                scheduled = await _schedule_reminder_jobs(msg.group_id, session)
+                session["scheduled_jobs"] = scheduled
+                display_tz = get_user_timezone(session["created_by_jid"])
+                fire_str = _format_fire_time(scheduled[0]["fire_at_utc"], display_tz)
+
+                if session.get("repeat_interval") == "ask":
+                    session["state"] = "awaiting_repeat"
+                    _awaiting_reply.add(msg.group_id)
+                    reply = f"✅ Reminder set for {fire_str}. Should this repeat? If yes, say how often (e.g. weekly, daily, every Monday)"
+                elif session.get("repeat_interval"):
+                    _pending_reminder.pop(msg.group_id, None)
+                    reply = f"✅ Reminder set for {fire_str}, repeating {session['repeat_interval']}"
+                else:
+                    _pending_reminder.pop(msg.group_id, None)
+                    reply = f"✅ Reminder set for {fire_str}"
+
+            elif _is_no(msg.text):
+                _pending_reminder.pop(msg.group_id, None)
+                reply = "Got it, no reminder."
+            else:
+                _pending_reminder.pop(msg.group_id, None)
+
+        elif session["state"] == "awaiting_repeat":
+            if _is_no(msg.text):
+                _pending_reminder.pop(msg.group_id, None)
+                reply = "Got it, reminder without repeat."
+            else:
+                interval = _extract_repeat_interval(msg.text)
+                if interval:
+                    # Cancel one-time jobs and re-add with repeat
+                    for j in session.get("scheduled_jobs", []):
+                        cancel_reminder(j["job_id"][:8], allowed_group_id=None)
+                    fire_at_naive = datetime.fromisoformat(session["iso_time"])
+                    setter_jid = session["created_by_jid"]
+                    participants = await _fetch_participants(msg.group_id)
+                    if participants:
+                        jobs = compute_reminder_jobs(participants, fire_at_naive, setter_jid)
+                    else:
+                        tz = get_user_timezone(setter_jid)
+                        jobs = [{"fire_at_utc": local_to_utc(fire_at_naive, tz), "mention_jids": [], "display_tz": tz}]
+                    for job in jobs:
+                        add_reminder(
+                            group_id=msg.group_id,
+                            message=session["message"],
+                            fire_at_utc=job["fire_at_utc"],
+                            mention_jids=job["mention_jids"],
+                            display_tz=job["display_tz"],
+                            repeat_interval=interval,
+                        )
+                    _pending_reminder.pop(msg.group_id, None)
+                    reply = f"✅ Repeating {interval}"
+                elif _is_yes(msg.text):
+                    _awaiting_reply.add(msg.group_id)
+                    reply = "How often? (e.g. daily, weekly, every Monday, monthly)"
+                else:
+                    _pending_reminder.pop(msg.group_id, None)
+                    reply = "Got it, reminder without repeat."
+
+        if reply:
+            if _latest_seq.get(msg.group_id) != seq:
+                return {"ok": True}
+            await _send(msg.group_id, reply)
+            await append_message(msg.group_id, "Bot", reply, datetime.now(timezone.utc).isoformat())
+            return {"ok": True}
+
+    # ── /usage command (Main group only) ──────────────────────────────────────
     if is_main_group(msg.group_id) and msg.text.strip().lower().startswith("/usage"):
         now = datetime.now(timezone.utc)
         s = get_monthly_summary(now.year, now.month)
@@ -152,11 +302,10 @@ async def webhook(msg: IncomingMessage):
                         await _fetch_and_cache_group_name(gid)
                         name = get_group_name(gid)
                 lines.append(f"• {name}: {g['calls']} calls, {g['tokens']:,} tokens, ${g['cost']:.4f}")
-        reply = "\n".join(lines)
-        await _send(msg.group_id, reply)
+        await _send(msg.group_id, "\n".join(lines))
         return {"ok": True}
 
-    # Summarize command: "/summarize"
+    # ── /summarize command ────────────────────────────────────────────────────
     if msg.text.strip().lower().startswith("/summarize"):
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
         if is_main_group(msg.group_id):
@@ -169,45 +318,110 @@ async def webhook(msg: IncomingMessage):
             if not combined:
                 reply = "No activity in any group today."
             else:
-                reply = await summarize_text(
-                    msg.group_id,
-                    f"Summarize today's activity across all groups:\n\n{combined}",
-                )
+                reply = await summarize_text(msg.group_id, f"Summarize today's activity across all groups:\n\n{combined}")
         else:
             chunk = read_history_since(msg.group_id, today_start)
             if not chunk:
                 reply = "No conversation recorded today yet."
             else:
-                reply = await summarize_text(
-                    msg.group_id,
-                    f"Summarize today's conversation in this group:\n\n{chunk}",
-                )
+                reply = await summarize_text(msg.group_id, f"Summarize today's conversation in this group:\n\n{chunk}")
         if _latest_seq.get(msg.group_id) != seq:
             return {"ok": True}
         await _send(msg.group_id, reply)
         await append_message(msg.group_id, "Bot", reply, datetime.now(timezone.utc).isoformat())
         return {"ok": True}
 
-    # Generate AI response
+    # ── /reminders command ────────────────────────────────────────────────────
+    if msg.text.strip().lower().startswith("/reminders"):
+        parts = msg.text.strip().split()
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        if subcommand == "cancel" and len(parts) > 2:
+            short_id = parts[2].lstrip("#")
+            allowed = None if is_main_group(msg.group_id) else msg.group_id
+            if cancel_reminder(short_id, allowed_group_id=allowed):
+                reply = f"✅ Reminder #{short_id} cancelled."
+            else:
+                reply = f"Couldn't find reminder #{short_id} for this group."
+        else:
+            # List reminders
+            group_filter = None if is_main_group(msg.group_id) else msg.group_id
+            jobs = list_reminders(group_filter)
+            if not jobs:
+                reply = "No pending reminders."
+            else:
+                lines = ["⏰ *Pending reminders*\n"]
+                current_group = None
+                for j in jobs:
+                    gid = j["group_id"]
+                    if is_main_group(msg.group_id) and gid != current_group:
+                        current_group = gid
+                        lines.append(f"\n*{get_group_name(gid)}*")
+                    tz = get_user_timezone(msg.sender_jid) or "Asia/Jerusalem"
+                    fire_str = _format_fire_time(j["next_run"], tz) if j["next_run"] else "unknown"
+                    mention_str = f" (@{', @'.join(jid.split('@')[0] for jid in j['mention_jids'])})" if j["mention_jids"] else ""
+                    lines.append(f"• #{j['id']} | {fire_str}{mention_str} — {j['message']}")
+                reply = "\n".join(lines)
+
+        if _latest_seq.get(msg.group_id) != seq:
+            return {"ok": True}
+        await _send(msg.group_id, reply)
+        return {"ok": True}
+
+    # ── Gemini ────────────────────────────────────────────────────────────────
     try:
-        reply = await process_message(msg.group_id, msg.sender, msg.text)
+        reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid)
     except Exception as e:
         print(f"Gemini error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Policy 2: skip if a newer message arrived while processing
     if _latest_seq.get(msg.group_id) != seq:
         return {"ok": True}
 
-    reply_text = reply["text"] if isinstance(reply, dict) else reply
-
+    # Handle special reply types from Gemini
     if isinstance(reply, dict):
+        rtype = reply.get("type")
+
+        if rtype == "set_reminder":
+            _pending_reminder[msg.group_id] = {
+                "message": reply["message"],
+                "iso_time": reply["iso_time"],
+                "repeat_interval": reply.get("repeat_interval"),
+                "created_by": msg.sender,
+                "created_by_jid": msg.sender_jid,
+                "state": "awaiting_confirm",
+            }
+            _awaiting_reply.add(msg.group_id)
+            tz = get_user_timezone(msg.sender_jid)
+            try:
+                fire_naive = datetime.fromisoformat(reply["iso_time"])
+                fire_str = fire_naive.strftime("%a %b %d at %H:%M")
+            except Exception:
+                fire_str = reply["iso_time"]
+            confirm_text = f"Should I set a reminder for {fire_str} — {reply['message']}? (yes/no)"
+            await _send(msg.group_id, confirm_text)
+            await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
+            return {"ok": True}
+
+        if rtype == "update_timezone":
+            raw_tz = reply.get("timezone", "")
+            resolved = await resolve_timezone(raw_tz)
+            if resolved and is_valid_tz(resolved):
+                set_user_timezone(msg.sender_jid, resolved)
+                confirm_text = f"✅ Your timezone is now {resolved}. You'll be @mentioned individually in groups where others have a different timezone."
+            else:
+                confirm_text = f"Sorry, I couldn't recognize '{raw_tz}' as a timezone. Try something like 'London', 'Tel Aviv', or 'New York'."
+            await _send(msg.group_id, confirm_text)
+            await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
+            return {"ok": True}
+
+        # Web search / other dicts
         _awaiting_reply.add(msg.group_id)
         await _send(msg.group_id, reply["text"], reply.get("buttons"))
+        await append_message(msg.group_id, "Bot", reply["text"], datetime.now(timezone.utc).isoformat())
     else:
         await _send(msg.group_id, reply)
-
-    await append_message(msg.group_id, "Bot", reply_text, datetime.now(timezone.utc).isoformat())
+        await append_message(msg.group_id, "Bot", reply, datetime.now(timezone.utc).isoformat())
 
     return {"ok": True}
 

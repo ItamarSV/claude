@@ -4,3 +4,6 @@ google-genai>=1.10.0
 httpx
 python-dotenv
 pydantic
+apscheduler>=3.10
+SQLAlchemy
+tzdata

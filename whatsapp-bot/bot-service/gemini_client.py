@@ -17,6 +17,8 @@ SYSTEM_PROMPT = """You are a helpful assistant in a WhatsApp group chat.
 You will receive the recent conversation (last 2 hours) as context before each message — use it to stay aware of the ongoing discussion.
 You also have a tool to read the full chat history when someone asks about something older than 2 hours.
 You also have a tool to request internet access when you need real-time or current information (news, weather, live prices, recent events, etc.).
+You also have a tool to set a reminder when a user explicitly asks you to remind them about something — use the current date provided in the message context to resolve relative times like "tonight", "Sunday", "in 30 minutes".
+You also have a tool to update a user's timezone when they ask to change it.
 Keep responses concise and conversational — this is a chat, not a document.
 Always reply in the same language as the message you received."""
 
@@ -52,16 +54,51 @@ _web_search_func = FunctionDeclaration(
     },
 )
 
+_set_reminder_func = FunctionDeclaration(
+    name="set_reminder",
+    description=(
+        "Call this when the user explicitly asks the bot to set a reminder. "
+        "Extract the reminder message and time. "
+        "Return iso_time as a naive ISO 8601 string in the user's local time (e.g. '2026-04-27T20:00:00'). "
+        "Use the current date provided in the message context to resolve relative times. "
+        "Set repeat_interval to 'ask' if you detect possible repeat intent but the user hasn't confirmed it."
+    ),
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "message": {"type": "STRING", "description": "What to remind about"},
+            "iso_time": {"type": "STRING", "description": "Naive ISO 8601 local datetime, e.g. '2026-04-27T20:00:00'"},
+            "repeat_interval": {"type": "STRING", "description": "Repeat interval: 'weekly', 'daily', 'every 30 minutes', 'monthly', 'yearly', etc. Omit if no repeat. Use 'ask' if repeat intent is possible but unclear."},
+        },
+        "required": ["message", "iso_time"],
+    },
+)
+
+_update_timezone_func = FunctionDeclaration(
+    name="update_timezone",
+    description=(
+        "Call this when the user asks to update their timezone. "
+        "Pass the user's input as-is — it will be resolved to an IANA timezone name."
+    ),
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "timezone": {"type": "STRING", "description": "User's timezone input, e.g. 'London', 'Tel Aviv', 'New York', 'Asia/Jerusalem'"},
+        },
+        "required": ["timezone"],
+    },
+)
+
 _base_config = GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
-    tools=[Tool(function_declarations=[_history_func, _web_search_func])],
+    tools=[Tool(function_declarations=[_history_func, _web_search_func, _set_reminder_func, _update_timezone_func])],
 )
 
 # Per-group pending web search state: group_id -> original message
 _pending_web_search: dict[str, str] = {}
 
 
-async def process_message(group_id: str, sender: str, text: str) -> str:
+async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "") -> str:
     # Check if this is a reply to a pending web search confirmation
     if group_id in _pending_web_search:
         clean = text.strip().lower()
@@ -74,12 +111,14 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
         else:
             _pending_web_search.pop(group_id, None)
 
+    from datetime import datetime as _dt
+    today = _dt.now().strftime("%A %Y-%m-%d")
     user_message = f"{sender}: {text}"
 
     recent = read_recent_history(group_id, hours=2)
     contents = (
-        f"Recent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
-        if recent else user_message
+        f"[Today is {today}]\nRecent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
+        if recent else f"[Today is {today}]\n{user_message}"
     )
 
     response = client.models.generate_content(
@@ -117,6 +156,22 @@ async def process_message(group_id: str, sender: str, text: str) -> str:
                     ],
                 }
 
+            if fc.name == "set_reminder":
+                args = dict(fc.args) if fc.args else {}
+                return {
+                    "type": "set_reminder",
+                    "message": args.get("message", ""),
+                    "iso_time": args.get("iso_time", ""),
+                    "repeat_interval": args.get("repeat_interval"),
+                }
+
+            if fc.name == "update_timezone":
+                args = dict(fc.args) if fc.args else {}
+                return {
+                    "type": "update_timezone",
+                    "timezone": args.get("timezone", ""),
+                }
+
     return _extract_text(response)
 
 
@@ -131,6 +186,15 @@ async def _web_search_call(group_id: str, user_message: str) -> str:
     )
     _track_cost(group_id, response)
     return _extract_text(response)
+
+
+async def resolve_timezone(text: str) -> str:
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=f'Convert this to an IANA timezone name. Reply with ONLY the IANA identifier (e.g. "Asia/Jerusalem", "Europe/London", "America/New_York"). Input: "{text}"',
+        config=GenerateContentConfig(system_instruction="You are a timezone resolver. Reply with just the IANA timezone identifier, nothing else."),
+    )
+    return _extract_text(response).strip()
 
 
 async def summarize_text(group_id: str, prompt: str) -> str:
