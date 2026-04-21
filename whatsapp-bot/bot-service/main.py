@@ -17,7 +17,8 @@ from cost_tracker import get_monthly_summary, COST_LOGS_DIR
 from history_manager import append_message, read_history_since, HISTORIES_DIR
 from policy_manager import (
     is_main_group, get_status, set_pending, get_pending,
-    activate, is_mention_only, is_listener, get_group_name, set_group_name, get_all_active_groups,
+    activate, is_mention_only, is_listener, reset_to_new,
+    get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
 )
 from reminders import scheduler, add_reminder, list_reminders, cancel_reminder
@@ -165,6 +166,16 @@ async def _schedule_reminder_jobs(group_id: str, session: dict) -> list[dict]:
 def _format_fire_time(fire_at_utc: datetime, tz: str) -> str:
     local = utc_to_local(fire_at_utc, tz)
     return local.strftime("%a %b %d %H:%M")
+
+
+class GroupLeft(BaseModel):
+    group_id: str
+
+
+@app.post("/group-left")
+async def group_left(body: GroupLeft):
+    reset_to_new(body.group_id)
+    return {"ok": True}
 
 
 @app.post("/group-joined")

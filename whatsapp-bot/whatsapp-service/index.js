@@ -67,12 +67,20 @@ async function connectToWhatsApp() {
 
   sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
     console.log(`group-participants.update: action=${action} id=${id} participants=${JSON.stringify(participants)}`);
-    if (action !== 'add') return;
-    const isBotAdded = participants.some(p =>
+    const isBotInvolved = participants.some(p =>
       (botNumber && p.startsWith(botNumber + '@')) ||
       (botLid && p.startsWith(botLid + '@'))
     );
-    if (isBotAdded) {
+    if (!isBotInvolved) return;
+
+    if (action === 'remove') {
+      try {
+        await axios.post(`${BOT_SERVICE_URL}/group-left`, { group_id: id });
+        console.log(`Bot removed from group: ${id}`);
+      } catch (err) {
+        console.error('Failed to notify group-left:', err.message);
+      }
+    } else if (action === 'add') {
       try {
         const meta = await sock.groupMetadata(id);
         console.log(`Bot added to group: ${meta.subject}`);

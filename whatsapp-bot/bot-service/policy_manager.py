@@ -74,6 +74,15 @@ def get_all_active_groups() -> list[tuple[str, str]]:
     ]
 
 
+def reset_to_new(group_id: str):
+    """Called when bot is removed from a group — resets so policy is re-asked on rejoin."""
+    data = _load()
+    if group_id in data:
+        name = data[group_id].get("name", group_id)
+        data[group_id] = {"status": "new", "name": name}
+        _save(data)
+
+
 def is_mention_only(group_id: str) -> bool:
     return _load().get(group_id, {}).get("mention_only", False)
 
