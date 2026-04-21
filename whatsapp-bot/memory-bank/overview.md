@@ -54,6 +54,15 @@ Both services run as systemd units on a GCP VM (no Docker).
 
 Policy is set from Main when bot is added to a group. Remove + re-add resets the policy.
 
+## Group Lifecycle Events
+| Event | Trigger | What happens |
+|---|---|---|
+| Bot added (first time) | `group-participants.update action=add` or `groups.upsert` | Notify Main with policy question |
+| Bot removed | `group-participants.update action=remove` | Notify Main "⚠️ I was removed from *Name*", reset group to "new" |
+| Bot re-added | `groups.upsert` (primary), or first message in group (fallback) | Notify Main with policy question |
+
+Note: `action=add` does NOT reliably fire when the bot is re-added to a group it was previously in. `groups.upsert` is used as the primary trigger.
+
 ## Known Limitations
 - Baileys is unofficial — small risk of WhatsApp banning the number
 - History files grow unboundedly (not a problem for years given 1M token window)

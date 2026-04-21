@@ -33,7 +33,10 @@ History is always saved regardless of whether the bot can respond (Gemini errors
 3. User replies `1`, `2`, or `3` in Main → policy activated for that group
 
 **Re-add flow (remove + re-add):**
-Baileys does NOT reliably fire `group-participants.update` with `action=add` when the bot itself is re-added. Fix: when `action=remove` fires for the bot, whatsapp-service POSTs `/group-left` → bot-service resets the group to `"new"` status. The next message from the group then triggers the policy question to Main.
+Baileys does NOT reliably fire `group-participants.update` with `action=add` when the bot itself is re-added. Fix:
+1. `action=remove` → `/group-left` → `reset_to_new()` + sends "⚠️ I was removed from *Name*" to Main
+2. `groups.upsert` fires when bot rejoins → `/group-joined` → policy question sent to Main immediately
+3. Fallback: if `groups.upsert` also misses, the next message from the group triggers the policy question
 
 **Policy modes (active groups):**
 - `mention_only=true` — reply only when @mentioned or replied to
@@ -41,7 +44,7 @@ Baileys does NOT reliably fire `group-participants.update` with `action=add` whe
 - `listener=true` — save messages to history but never reply; group is summarizable from Main via `/summarize`
 - Policy 2 (always on): skip reply if a newer message arrived during Gemini processing
 
-**`/group-joined` endpoint:** called by whatsapp-service when bot is added to a group. Idempotent — only acts if status is `new`.
+**`/group-joined` endpoint:** called by whatsapp-service when bot is added/rejoined. Idempotent — only acts if status is `new` (skips if already active or pending).
 
 **`group_policies.json` structure:**
 ```json
