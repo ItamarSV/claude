@@ -17,7 +17,7 @@ from cost_tracker import get_monthly_summary, COST_LOGS_DIR
 from history_manager import append_message, read_history_since, HISTORIES_DIR
 from policy_manager import (
     is_main_group, get_status, set_pending, get_pending,
-    activate, is_mention_only, get_group_name, set_group_name, get_all_active_groups,
+    activate, is_mention_only, is_listener, get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
 )
 from reminders import scheduler, add_reminder, list_reminders, cancel_reminder
@@ -186,10 +186,12 @@ async def webhook(msg: IncomingMessage):
 
     if is_main_group(msg.group_id):
         pending = get_pending()
-        if pending and msg.text.strip() in ("1", "2"):
-            mention_only = msg.text.strip() == "1"
-            activate(pending["group_id"], mention_only)
-            label = "@mention only" if mention_only else "all messages"
+        if pending and msg.text.strip() in ("1", "2", "3"):
+            choice = msg.text.strip()
+            mention_only = choice == "1"
+            listener = choice == "3"
+            activate(pending["group_id"], mention_only=mention_only, listener=listener)
+            label = "@mention only" if mention_only else ("listener only" if listener else "all messages")
             await _send(MAIN_GROUP_ID, f"Policy set for *{pending['group_name']}*: {label} ✅")
             return {"ok": True}
     else:
@@ -206,6 +208,10 @@ async def webhook(msg: IncomingMessage):
 
         if get_group_name(msg.group_id) == msg.group_id:
             await _fetch_and_cache_group_name(msg.group_id)
+
+        # Listener mode — save history but never reply
+        if is_listener(msg.group_id):
+            return {"ok": True}
 
         awaiting = msg.group_id in _awaiting_reply
         if awaiting:

@@ -39,14 +39,18 @@ def get_pending() -> dict | None:
     return _load().get("_pending")
 
 
-def activate(group_id: str, mention_only: bool):
+def activate(group_id: str, mention_only: bool, listener: bool = False):
     data = _load()
     pending = data.get("_pending", {})
     group_name = pending.get("group_name", group_id) if pending.get("group_id") == group_id else group_id
-    data[group_id] = {"status": "active", "mention_only": mention_only, "name": group_name}
+    data[group_id] = {"status": "active", "mention_only": mention_only, "listener": listener, "name": group_name}
     if pending.get("group_id") == group_id:
         del data["_pending"]
     _save(data)
+
+
+def is_listener(group_id: str) -> bool:
+    return _load().get(group_id, {}).get("listener", False)
 
 
 def get_group_name(group_id: str) -> str:
@@ -79,6 +83,7 @@ def new_group_message(group_name: str) -> str:
         f"I was invited to a new group: *{group_name}*\n\n"
         "What policy should I use?\n"
         "*1.* Reply only when @mentioned\n"
-        "*2.* Reply to all messages\n\n"
-        "Reply *1* or *2*."
+        "*2.* Reply to all messages\n"
+        "*3.* Listener only (read silently, never reply)\n\n"
+        "Reply *1*, *2*, or *3*."
     )
