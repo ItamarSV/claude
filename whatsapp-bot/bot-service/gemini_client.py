@@ -194,6 +194,34 @@ async def _web_search_call(group_id: str, user_message: str) -> str:
     return _extract_text(response)
 
 
+async def resolve_repeat_interval(text: str) -> dict | None:
+    prompt = (
+        f'Convert this repeat schedule to APScheduler trigger parameters. '
+        f'Reply with ONLY a JSON object, no other text.\n\n'
+        f'For day-of-week patterns use: {{"type": "cron", "day_of_week": "<apscheduler day_of_week>"}}\n'
+        f'  day_of_week uses: mon tue wed thu fri sat sun, comma-separated or ranges\n'
+        f'  Examples: "every Monday" -> {{"type": "cron", "day_of_week": "mon"}}\n'
+        f'            "every Monday and Sunday" -> {{"type": "cron", "day_of_week": "mon,sun"}}\n'
+        f'            "every weekday" -> {{"type": "cron", "day_of_week": "mon-fri"}}\n\n'
+        f'For interval patterns use: {{"type": "interval", "weeks": N}} or "days", "hours", "minutes"\n'
+        f'  Examples: "weekly" -> {{"type": "interval", "weeks": 1}}\n'
+        f'            "every 2 days" -> {{"type": "interval", "days": 2}}\n'
+        f'            "daily" -> {{"type": "interval", "days": 1}}\n\n'
+        f'Input: "{text}"'
+    )
+    import json as _json
+    response = client.models.generate_content(model=MODEL, contents=prompt)
+    raw = _extract_text(response).strip()
+    import re as _re
+    m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+    if m:
+        try:
+            return _json.loads(m.group())
+        except Exception:
+            pass
+    return None
+
+
 async def resolve_timezone(text: str) -> str:
     response = client.models.generate_content(
         model=MODEL,

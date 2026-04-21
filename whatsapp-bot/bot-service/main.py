@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from gemini_client import process_message, summarize_text, resolve_timezone, transcribe_audio
+from gemini_client import process_message, summarize_text, resolve_timezone, transcribe_audio, resolve_repeat_interval
 from cost_tracker import get_monthly_summary, COST_LOGS_DIR
 from history_manager import append_message, read_history_since, HISTORIES_DIR
 from policy_manager import (
@@ -116,6 +116,10 @@ def _is_no(text: str) -> bool:
     return t in NO_WORDS or any(t.startswith(w) for w in NO_WORDS)
 
 
+_DAY_WORDS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+              "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+              "weekday", "weekdays", "weekend", "weekends"}
+
 def _extract_repeat_interval(text: str) -> str | None:
     t = text.lower()
     m = re.search(r"every\s+(\d+)\s+minute", t)
@@ -132,6 +136,10 @@ def _extract_repeat_interval(text: str) -> str | None:
         return "monthly"
     if re.search(r"every\s+year|yearly|annually|כל שנה|שנתי", t):
         return "yearly"
+    # Pass through day-of-week phrases to Gemini resolver
+    words = set(re.split(r'[\s,/&]+', t))
+    if words & _DAY_WORDS:
+        return text.strip()
     return None
 
 
@@ -151,6 +159,13 @@ async def _schedule_reminder_jobs(group_id: str, session: dict) -> list[dict]:
     if repeat == "ask":
         repeat = None
 
+    repeat_spec = None
+    if repeat:
+        try:
+            repeat_spec = await resolve_repeat_interval(repeat)
+        except Exception:
+            pass
+
     for job in jobs:
         job_id = add_reminder(
             group_id=group_id,
@@ -159,6 +174,7 @@ async def _schedule_reminder_jobs(group_id: str, session: dict) -> list[dict]:
             mention_jids=job["mention_jids"],
             display_tz=job["display_tz"],
             repeat_interval=repeat,
+            repeat_spec=repeat_spec,
         )
         scheduled.append({**job, "job_id": job_id})
 
@@ -288,6 +304,11 @@ async def webhook(msg: IncomingMessage):
                     # Cancel one-time jobs and re-add with repeat
                     for j in session.get("scheduled_jobs", []):
                         cancel_reminder(j["job_id"][:8], allowed_group_id=None)
+                    repeat_spec = None
+                    try:
+                        repeat_spec = await resolve_repeat_interval(interval)
+                    except Exception:
+                        pass
                     fire_at_naive = datetime.fromisoformat(session["iso_time"])
                     setter_jid = session["created_by_jid"]
                     participants = await _fetch_participants(msg.group_id)
@@ -304,6 +325,7 @@ async def webhook(msg: IncomingMessage):
                             mention_jids=job["mention_jids"],
                             display_tz=job["display_tz"],
                             repeat_interval=interval,
+                            repeat_spec=repeat_spec,
                         )
                     _pending_reminder.pop(msg.group_id, None)
                     reply = f"✅ Repeating {interval}"

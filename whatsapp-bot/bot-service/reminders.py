@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -54,6 +55,23 @@ def _repeat_trigger(repeat_interval: str):
     return None
 
 
+def _build_trigger(repeat_spec: dict | None, repeat_interval: str | None, fire_at_utc: datetime):
+    if repeat_spec:
+        t = repeat_spec.get("type")
+        if t == "cron":
+            return CronTrigger(day_of_week=repeat_spec.get("day_of_week"),
+                               hour=repeat_spec.get("hour"),
+                               minute=repeat_spec.get("minute", 0))
+        if t == "interval":
+            kwargs = {k: v for k, v in repeat_spec.items() if k != "type"}
+            return IntervalTrigger(**kwargs)
+    if repeat_interval:
+        t = _repeat_trigger(repeat_interval)
+        if t:
+            return t
+    return DateTrigger(run_date=fire_at_utc)
+
+
 def add_reminder(
     group_id: str,
     message: str,
@@ -61,8 +79,9 @@ def add_reminder(
     mention_jids: list,
     display_tz: str,
     repeat_interval: str | None = None,
+    repeat_spec: dict | None = None,
 ) -> str:
-    trigger = _repeat_trigger(repeat_interval) if repeat_interval else DateTrigger(run_date=fire_at_utc)
+    trigger = _build_trigger(repeat_spec, repeat_interval, fire_at_utc)
     job = scheduler.add_job(
         fire_reminder,
         trigger=trigger,
