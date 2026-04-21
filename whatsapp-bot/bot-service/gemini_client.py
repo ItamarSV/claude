@@ -112,13 +112,17 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
             _pending_web_search.pop(group_id, None)
 
     from datetime import datetime as _dt
-    today = _dt.now().strftime("%A %Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    from timezone_manager import get_user_timezone
+    user_tz = get_user_timezone(sender_jid) if sender_jid else "Asia/Jerusalem"
+    now_local = _dt.now(ZoneInfo(user_tz))
+    time_context = f"[Today is {now_local.strftime('%A %Y-%m-%d')}, current local time is {now_local.strftime('%H:%M')} ({user_tz})]"
     user_message = f"{sender}: {text}"
 
     recent = read_recent_history(group_id, hours=2)
     contents = (
-        f"[Today is {today}]\nRecent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
-        if recent else f"[Today is {today}]\n{user_message}"
+        f"{time_context}\nRecent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
+        if recent else f"{time_context}\n{user_message}"
     )
 
     response = client.models.generate_content(
