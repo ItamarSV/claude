@@ -178,7 +178,7 @@ async function connectToWhatsApp() {
         false;
 
       // Strip @mention markers from text so Gemini doesn't see raw IDs
-      const cleanText = text.replace(/@\d+/g, '').replace(/\s+/g, ' ').trim();
+      const cleanText = (text || '').replace(/@\d+/g, '').replace(/\s+/g, ' ').trim();
 
       const sender = msg.pushName || msg.key.participant?.split('@')[0] || 'Unknown';
       const timestamp = new Date(msg.messageTimestamp * 1000).toISOString();
