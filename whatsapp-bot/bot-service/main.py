@@ -174,7 +174,10 @@ class GroupLeft(BaseModel):
 
 @app.post("/group-left")
 async def group_left(body: GroupLeft):
+    name = get_group_name(body.group_id)
     reset_to_new(body.group_id)
+    if MAIN_GROUP_ID:
+        await _send(MAIN_GROUP_ID, f"⚠️ I was removed from *{name}*.")
     return {"ok": True}
 
 
