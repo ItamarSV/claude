@@ -72,12 +72,36 @@ def add_reminder(
     return job.id
 
 
+def _trigger_to_interval(trigger) -> str | None:
+    interval = getattr(trigger, "interval", None)
+    if interval is None:
+        return None
+    total_seconds = int(interval.total_seconds())
+    days = total_seconds // 86400
+    if days == 1:
+        return "daily"
+    if days == 7:
+        return "weekly"
+    if days == 30:
+        return "monthly"
+    if days == 365:
+        return "yearly"
+    hours = total_seconds // 3600
+    if hours < 24:
+        return f"every {hours} hours" if hours > 1 else "every hour"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"every {minutes} minutes"
+    return f"every {days} days"
+
+
 def list_reminders(group_id: str | None = None) -> list[dict]:
     result = []
     for job in scheduler.get_jobs():
         kw = job.kwargs
         if group_id and kw.get("group_id") != group_id:
             continue
+        repeat = kw.get("repeat_interval") or _trigger_to_interval(job.trigger)
         result.append({
             "id": job.id[:8],
             "full_id": job.id,
@@ -85,7 +109,7 @@ def list_reminders(group_id: str | None = None) -> list[dict]:
             "message": kw.get("message"),
             "next_run": job.next_run_time,
             "mention_jids": kw.get("mention_jids", []),
-            "repeat_interval": kw.get("repeat_interval"),
+            "repeat_interval": repeat,
         })
     return sorted(result, key=lambda x: x["next_run"] or datetime.max.replace(tzinfo=ZoneInfo("UTC")))
 
