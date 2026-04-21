@@ -29,11 +29,16 @@ History is always saved regardless of whether the bot can respond (Gemini errors
 
 **New group flow:**
 1. Bot added to group → `group-participants.update` → POST `/group-joined` with group name
-2. Bot sends to Main: *"I was invited to [group name]. What policy? 1=@mention only, 2=all messages"*
-3. User replies `1` or `2` in Main → policy activated for that group
+2. Bot sends to Main: *"I was invited to [group name]. What policy? 1=@mention only, 2=all messages, 3=listener only"*
+3. User replies `1`, `2`, or `3` in Main → policy activated for that group
 
-**Policy enforcement (active groups):**
-- Policy 1 (`mention_only`): skip if `is_bot_mentioned` is false
+**Re-add flow (remove + re-add):**
+Baileys does NOT reliably fire `group-participants.update` with `action=add` when the bot itself is re-added. Fix: when `action=remove` fires for the bot, whatsapp-service POSTs `/group-left` → bot-service resets the group to `"new"` status. The next message from the group then triggers the policy question to Main.
+
+**Policy modes (active groups):**
+- `mention_only=true` — reply only when @mentioned or replied to
+- `mention_only=false` — reply to all messages
+- `listener=true` — save messages to history but never reply; group is summarizable from Main via `/summarize`
 - Policy 2 (always on): skip reply if a newer message arrived during Gemini processing
 
 **`/group-joined` endpoint:** called by whatsapp-service when bot is added to a group. Idempotent — only acts if status is `new`.

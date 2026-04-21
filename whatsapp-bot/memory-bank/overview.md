@@ -45,6 +45,15 @@ Both services run as systemd units on a GCP VM (no Docker).
 - `@bot remind me at 18:00 to call David` — sets a reminder with optional repeat
 - `@bot set my timezone to London` — updates the user's timezone across all groups
 
+## Group Policies
+| Option | Mode | Behaviour |
+|---|---|---|
+| `1` | @mention only | Replies when explicitly @mentioned or replied to |
+| `2` | All messages | Replies to every message |
+| `3` | Listener | Reads silently, never replies — summarizable from Main via `/summarize` |
+
+Policy is set from Main when bot is added to a group. Remove + re-add resets the policy.
+
 ## Known Limitations
 - Baileys is unofficial — small risk of WhatsApp banning the number
 - History files grow unboundedly (not a problem for years given 1M token window)

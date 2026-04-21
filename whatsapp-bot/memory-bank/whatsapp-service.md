@@ -73,6 +73,11 @@ Returns `{ name: "Group Name" }`. Used by bot-service to backfill group names in
 ### bot-service `/group-joined` (called by whatsapp-service)
 Triggered via `group-participants.update` when bot is added to a group. Fetches group metadata to get the name, then POSTs `{group_id, group_name}` to bot-service `/group-joined`.
 
+### bot-service `/group-left` (called by whatsapp-service)
+Triggered via `group-participants.update` when bot is **removed** from a group. POSTs `{group_id}` to bot-service `/group-left` which resets the group status to `"new"` so the policy question fires again on rejoin.
+
+**Known Baileys behavior:** `group-participants.update` with `action=add` does NOT reliably fire when the bot itself is re-added. The `/group-left` reset ensures the next incoming message from the group triggers the policy flow as a fallback.
+
 ### `GET /health`
 Returns `{ "ok": true }`. Used to verify the service is alive.
 
