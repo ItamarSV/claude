@@ -21,7 +21,7 @@ from policy_manager import (
     get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
 )
-from reminders import scheduler, add_reminder, list_reminders, cancel_reminder
+from reminders import scheduler, add_reminder, list_reminders, cancel_reminder as _cancel_reminder_job
 from timezone_manager import (
     get_user_timezone, set_user_timezone, is_valid_tz,
     local_to_utc, utc_to_local, compute_reminder_jobs,
@@ -303,7 +303,7 @@ async def webhook(msg: IncomingMessage):
                 if interval:
                     # Cancel one-time jobs and re-add with repeat
                     for j in session.get("scheduled_jobs", []):
-                        cancel_reminder(j["job_id"][:8], allowed_group_id=None)
+                        _cancel_reminder_job(j["job_id"][:8], allowed_group_id=None)
                     repeat_spec = None
                     try:
                         repeat_spec = await resolve_repeat_interval(interval)
@@ -397,7 +397,7 @@ async def webhook(msg: IncomingMessage):
         if subcommand == "cancel" and len(parts) > 2:
             short_id = parts[2].lstrip("#")
             allowed = None if is_main_group(msg.group_id) else msg.group_id
-            if cancel_reminder(short_id, allowed_group_id=allowed):
+            if _cancel_reminder_job(short_id, allowed_group_id=allowed):
                 reply = f"✅ Reminder #{short_id} cancelled."
             else:
                 reply = f"Couldn't find reminder #{short_id} for this group."
@@ -429,8 +429,18 @@ async def webhook(msg: IncomingMessage):
         return {"ok": True}
 
     # ── Gemini ────────────────────────────────────────────────────────────────
+    pending = list_reminders(msg.group_id)
+    reminders_context = ""
+    if pending:
+        lines = []
+        for j in pending:
+            repeat = f" 🔁 {j['repeat_interval']}" if j.get("repeat_interval") else ""
+            fire_str = _format_fire_time(j["next_run"], get_user_timezone(msg.sender_jid)) if j["next_run"] else "unknown"
+            lines.append(f"#{j['id']} | {fire_str}{repeat} — {j['message']}")
+        reminders_context = "\n".join(lines)
+
     try:
-        reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid)
+        reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context)
     except Exception as e:
         print(f"Gemini error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -471,6 +481,17 @@ async def webhook(msg: IncomingMessage):
                 confirm_text = f"✅ Your timezone is now {resolved}. You'll be @mentioned individually in groups where others have a different timezone."
             else:
                 confirm_text = f"Sorry, I couldn't recognize '{raw_tz}' as a timezone. Try something like 'London', 'Tel Aviv', or 'New York'."
+            await _send(msg.group_id, confirm_text)
+            await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
+            return {"ok": True}
+
+        if rtype == "cancel_reminder":
+            rid = reply.get("reminder_id", "").lstrip("#")
+            allowed = None if is_main_group(msg.group_id) else msg.group_id
+            if rid and _cancel_reminder_job(rid, allowed_group_id=allowed):
+                confirm_text = f"✅ Reminder #{rid} cancelled."
+            else:
+                confirm_text = f"I couldn't find that reminder. Use /reminders to see what's active."
             await _send(msg.group_id, confirm_text)
             await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
             return {"ok": True}

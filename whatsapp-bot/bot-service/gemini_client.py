@@ -20,6 +20,7 @@ You will receive the recent conversation (last 2 hours) as context before each m
 You also have a tool to read the full chat history when someone asks about something older than 2 hours.
 You also have a tool to request internet access when you need real-time or current information (news, weather, live prices, recent events, etc.).
 You also have a tool to set a reminder when a user explicitly asks you to remind them about something — use the current date provided in the message context to resolve relative times like "tonight", "Sunday", "in 30 minutes".
+You also have a tool to cancel a reminder when a user asks to delete or remove one — use the pending reminders list provided in the context to identify the correct reminder ID.
 You also have a tool to update a user's timezone when they ask to change it.
 Keep responses concise and conversational — this is a chat, not a document.
 Always reply in the same language as the message you received."""
@@ -91,16 +92,31 @@ _update_timezone_func = FunctionDeclaration(
     },
 )
 
+_cancel_reminder_func = FunctionDeclaration(
+    name="cancel_reminder",
+    description=(
+        "Call this when the user asks to cancel, delete, or remove a reminder. "
+        "Use the pending reminders list in the context to identify the correct reminder ID."
+    ),
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "reminder_id": {"type": "STRING", "description": "The short reminder ID (e.g. 'af4e6a90') from the pending reminders list"},
+        },
+        "required": ["reminder_id"],
+    },
+)
+
 _base_config = GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
-    tools=[Tool(function_declarations=[_history_func, _web_search_func, _set_reminder_func, _update_timezone_func])],
+    tools=[Tool(function_declarations=[_history_func, _web_search_func, _set_reminder_func, _update_timezone_func, _cancel_reminder_func])],
 )
 
 # Per-group pending web search state: group_id -> original message
 _pending_web_search: dict[str, str] = {}
 
 
-async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "") -> str:
+async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "", reminders_context: str = "") -> str:
     # Check if this is a reply to a pending web search confirmation
     if group_id in _pending_web_search:
         clean = text.strip().lower()
@@ -122,9 +138,12 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
     user_message = f"{sender}: {text}"
 
     recent = read_recent_history(group_id, hours=2)
+    extra = ""
+    if reminders_context:
+        extra = f"\nPending reminders in this group:\n{reminders_context}"
     contents = (
-        f"{time_context}\nRecent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
-        if recent else f"{time_context}\n{user_message}"
+        f"{time_context}{extra}\nRecent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
+        if recent else f"{time_context}{extra}\n{user_message}"
     )
 
     response = client.models.generate_content(
@@ -176,6 +195,13 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                 return {
                     "type": "update_timezone",
                     "timezone": args.get("timezone", ""),
+                }
+
+            if fc.name == "cancel_reminder":
+                args = dict(fc.args) if fc.args else {}
+                return {
+                    "type": "cancel_reminder",
+                    "reminder_id": args.get("reminder_id", ""),
                 }
 
     return _extract_text(response)
