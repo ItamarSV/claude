@@ -227,7 +227,14 @@ async def summarize_text(group_id: str, prompt: str) -> str:
 
 
 def _extract_text(response) -> str:
-    for part in response.candidates[0].content.parts:
+    candidates = getattr(response, "candidates", None)
+    if not candidates:
+        return "Sorry, I couldn't generate a response."
+    content = getattr(candidates[0], "content", None)
+    parts = getattr(content, "parts", None) if content else None
+    if not parts:
+        return "Sorry, I couldn't generate a response."
+    for part in parts:
         if hasattr(part, "text") and part.text:
             return part.text.strip()
     return "Sorry, I couldn't generate a response."
