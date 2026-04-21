@@ -94,6 +94,28 @@ async function connectToWhatsApp() {
     }
   });
 
+  sock.ev.on('groups.upsert', async (groups) => {
+    for (const group of groups) {
+      const id = group.id;
+      if (!id) continue;
+      try {
+        const meta = await sock.groupMetadata(id);
+        const isBot = (meta.participants || []).some(p =>
+          (botNumber && p.id.startsWith(botNumber + '@')) ||
+          (botLid && p.id.startsWith(botLid + '@'))
+        );
+        if (!isBot) continue;
+        console.log(`groups.upsert: bot is member of ${meta.subject} (${id})`);
+        await axios.post(`${BOT_SERVICE_URL}/group-joined`, {
+          group_id: id,
+          group_name: meta.subject || id,
+        });
+      } catch (err) {
+        console.error('Failed to handle groups.upsert for', id, err.message);
+      }
+    }
+  });
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 

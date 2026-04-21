@@ -185,6 +185,8 @@ async def group_left(body: GroupLeft):
 async def group_joined(body: GroupJoined):
     if is_main_group(body.group_id) or not MAIN_GROUP_ID:
         return {"ok": True}
+    if get_status(body.group_id) != "new":
+        return {"ok": True}
     set_pending(body.group_id, body.group_name)
     await _send(MAIN_GROUP_ID, new_group_message(body.group_name))
     return {"ok": True}
@@ -213,8 +215,9 @@ async def webhook(msg: IncomingMessage):
 
         if status == "new":
             if MAIN_GROUP_ID:
-                set_pending(msg.group_id, msg.group_id)
-                await _send(MAIN_GROUP_ID, new_group_message(msg.group_id))
+                name = get_group_name(msg.group_id)
+                set_pending(msg.group_id, name)
+                await _send(MAIN_GROUP_ID, new_group_message(name))
             return {"ok": True}
 
         if status == "pending":
