@@ -19,7 +19,7 @@ scheduler = AsyncIOScheduler(
 )
 
 
-async def fire_reminder(group_id: str, message: str, mention_jids: list):
+async def fire_reminder(group_id: str, message: str, mention_jids: list, repeat_interval: str | None = None):
     if mention_jids:
         mentions_text = " ".join(f"@{jid.split('@')[0]}" for jid in mention_jids)
         text = f"⏰ {mentions_text} Reminder: {message}"
@@ -66,7 +66,7 @@ def add_reminder(
     job = scheduler.add_job(
         fire_reminder,
         trigger=trigger,
-        kwargs={"group_id": group_id, "message": message, "mention_jids": mention_jids},
+        kwargs={"group_id": group_id, "message": message, "mention_jids": mention_jids, "repeat_interval": repeat_interval},
         misfire_grace_time=300,
     )
     return job.id
@@ -85,6 +85,7 @@ def list_reminders(group_id: str | None = None) -> list[dict]:
             "message": kw.get("message"),
             "next_run": job.next_run_time,
             "mention_jids": kw.get("mention_jids", []),
+            "repeat_interval": kw.get("repeat_interval"),
         })
     return sorted(result, key=lambda x: x["next_run"] or datetime.max.replace(tzinfo=ZoneInfo("UTC")))
 

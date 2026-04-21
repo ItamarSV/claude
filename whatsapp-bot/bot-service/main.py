@@ -397,7 +397,8 @@ async def webhook(msg: IncomingMessage):
                     tz = get_user_timezone(msg.sender_jid) or "Asia/Jerusalem"
                     fire_str = _format_fire_time(j["next_run"], tz) if j["next_run"] else "unknown"
                     mention_str = f" (@{', @'.join(jid.split('@')[0] for jid in j['mention_jids'])})" if j["mention_jids"] else ""
-                    lines.append(f"• #{j['id']} | {fire_str}{mention_str} — {j['message']}")
+                    repeat_str = f" 🔁 {j['repeat_interval']}" if j.get("repeat_interval") else ""
+                    lines.append(f"• #{j['id']} | {fire_str}{mention_str}{repeat_str} — {j['message']}")
                 reply = "\n".join(lines)
 
         if _latest_seq.get(msg.group_id) != seq:
