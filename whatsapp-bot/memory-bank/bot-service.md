@@ -81,7 +81,7 @@ Four function declarations registered: `get_group_history`, `request_web_search`
 
 **`update_timezone`** → returns `{"type": "update_timezone", "timezone"}` — resolved via `resolve_timezone()` Gemini call, saved to `user_timezones.json` by JID.
 
-**Today's date** is injected into every `process_message` call (`[Today is Monday 2026-04-21]`) so Gemini can resolve relative times in reminders.
+**Local time context** is injected into every `process_message` call: `[Today is Monday 2026-04-21, current local time is 17:32 (Asia/Jerusalem)]` using the sender's timezone from `user_timezones.json`. This ensures Gemini resolves relative times ("in 5 minutes", "tonight") correctly in the user's local time, not UTC. The returned `iso_time` is then treated as naive local time in the setter's timezone.
 
 Gemini decides autonomously whether history or search is needed.
 
