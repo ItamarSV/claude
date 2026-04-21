@@ -19,7 +19,7 @@ Baileys (`@whiskeysockets/baileys`) is a CommonJS package. The service must use 
 **Note:** The bot number is registered as WhatsApp Business. Baileys works with both regular and Business accounts — no difference in protocol.
 
 ## Session Management
-- Auth state is stored in `.baileys_auth/` (gitignored, Docker volume or local dir)
+- Auth state is stored in `.baileys_auth/` (gitignored, local dir on the VM)
 - After scanning, the session persists indefinitely in `.baileys_auth/`
 - If session expires (WhatsApp revoked it): delete `.baileys_auth/`, restart service, re-scan QR at `/qr`
 
@@ -32,7 +32,12 @@ On every incoming message the service checks:
 
 Text is extracted from: `conversation`, `extendedTextMessage.text`, or button clicks (`interactiveResponseMessage.nativeFlowResponseMessage.paramsJson` → `id` field).
 
-Every forwarded message includes `is_bot_mentioned: bool` (true if bot's JID appears in `extendedTextMessage.contextInfo.mentionedJid`). Filtering by mention is handled in bot-service based on per-group policy, not here.
+Every forwarded message includes:
+- `is_bot_mentioned: bool` — true if bot's JID in `mentionedJid`
+- `is_reply_to_bot: bool` — true if `contextInfo.participant` matches bot's JID
+- `sender_jid: str` — the sender's full JID (from `msg.key.participant`), used for timezone lookup in reminders
+
+Filtering by mention is handled in bot-service based on per-group policy, not here.
 
 Bot's own JID is captured on `connection === 'open'`:
 - `botNumber` from `sock.user.id` (e.g. `972559925787`)
@@ -53,22 +58,19 @@ Called by bot-service to send a reply to a group.
 ```json
 { "group_id": "120363abc@g.us", "text": "The meeting is at 3pm." }
 ```
-Optional `buttons` array sends a numbered plain-text choice instead of plain text:
-```json
-{
-  "group_id": "120363abc@g.us",
-  "text": "Want me to search the web?",
-  "buttons": [
-    { "id": "web_search_yes", "text": "🔍 Yes, search" },
-    { "id": "web_search_no", "text": "❌ No thanks" }
-  ]
-}
-```
-Rendered as: `<text>\n\n1. 🔍 Yes, search\n2. ❌ No thanks\n\nReply *1* or *2*`
+Optional fields:
+- `buttons` — renders as numbered plain-text choice: `1. Yes  2. No  Reply *1* or *2*`
+- `mention_jids` — array of JIDs to @mention (used by reminder firing for users with different timezones)
 
-**Note:** `nativeFlowMessage` via `proto`/`relayMessage` was tried and silently dropped by WhatsApp (no error thrown, message never arrived). Plain-text numbered list is the reliable approach for personal accounts.
+**Note:** Real interactive buttons (`nativeFlowMessage`) were tried and silently dropped by WhatsApp with no error. Plain-text numbered list is the only reliable approach for non-Meta-API accounts.
 
-### `POST /group-joined` (bot-service endpoint, called by whatsapp-service)
+### `GET /group-participants?group_id=`
+Returns `{ participants: [{jid, name}] }` via `sock.groupMetadata()`. Used by bot-service to compute per-timezone reminder jobs.
+
+### `GET /group-name?group_id=`
+Returns `{ name: "Group Name" }`. Used by bot-service to backfill group names in `group_policies.json`.
+
+### bot-service `/group-joined` (called by whatsapp-service)
 Triggered via `group-participants.update` when bot is added to a group. Fetches group metadata to get the name, then POSTs `{group_id, group_name}` to bot-service `/group-joined`.
 
 ### `GET /health`

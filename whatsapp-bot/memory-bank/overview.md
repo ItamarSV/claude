@@ -1,7 +1,7 @@
 # WhatsApp AI Bot — Overview
 
 ## Purpose
-A personal WhatsApp bot that lives as its own WhatsApp user (registered on a Twilio virtual number). You invite it to any group you want. It answers questions using Gemini Pro with live Google Search, and can look back through a group's full chat history when needed.
+A personal WhatsApp bot that lives as its own WhatsApp Business user (real eSIM, +972559925787). You invite it to any group you want. It answers questions using Gemini with live Google Search, sets reminders, and can look back through a group's full chat history when needed.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Both services run as systemd units on a GCP VM (no Docker).
 |---|---|---|
 | WhatsApp library | Baileys (unofficial) | Meta Cloud API requires 100K conv/month for groups; max 8 participants |
 | Two services | Node.js + Python | Baileys is Node.js only; Gemini tooling is best in Python |
-| History storage | One .txt file per group | Gemini 1.5 Pro has 1M token context — entire history fits; no DB needed |
+| History storage | One .txt file per group | gemini-2.5-flash has large context — entire history fits; no DB needed |
 | History routing | Gemini tool use | Model decides when history is needed; no double API calls for simple questions |
 | Cost tracking | Per-call log in monthly .txt | Auditable, readable, easy to parse for future monthly report |
 
