@@ -356,7 +356,8 @@ async def webhook(msg: IncomingMessage):
                     gid = j["group_id"]
                     if is_main_group(msg.group_id) and gid != current_group:
                         current_group = gid
-                        lines.append(f"\n*{get_group_name(gid)}*")
+                        display_name = "Main" if is_main_group(gid) else get_group_name(gid)
+                        lines.append(f"\n_*{display_name}*_")
                     tz = get_user_timezone(msg.sender_jid) or "Asia/Jerusalem"
                     fire_str = _format_fire_time(j["next_run"], tz) if j["next_run"] else "unknown"
                     mention_str = f" (@{', @'.join(jid.split('@')[0] for jid in j['mention_jids'])})" if j["mention_jids"] else ""
