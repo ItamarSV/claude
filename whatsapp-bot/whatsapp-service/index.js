@@ -4,6 +4,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const axios = require('axios');
@@ -145,7 +146,21 @@ async function connectToWhatsApp() {
           null;
       }
 
-      if (!text) continue;
+      // If no text, check for audio message
+      let audioData = null;
+      let audioMime = null;
+      if (!text && msg.message.audioMessage) {
+        try {
+          const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          audioData = buffer.toString('base64');
+          audioMime = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+          console.log(`Audio message from ${msg.pushName || 'unknown'}, size=${buffer.length}b`);
+        } catch (err) {
+          console.error('Failed to download audio message:', err.message);
+        }
+      }
+
+      if (!text && !audioData) continue;
 
       const mentionedJids = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
       const isBotMentioned =
@@ -169,15 +184,20 @@ async function connectToWhatsApp() {
       const timestamp = new Date(msg.messageTimestamp * 1000).toISOString();
 
       try {
-        await axios.post(`${BOT_SERVICE_URL}/webhook`, {
+        const payload = {
           group_id: jid,
           sender,
           sender_jid: msg.key.participant || '',
-          text: cleanText,
+          text: cleanText || '',
           timestamp,
           is_bot_mentioned: isBotMentioned,
           is_reply_to_bot: isReplyToBot,
-        });
+        };
+        if (audioData) {
+          payload.audio_data = audioData;
+          payload.audio_mime = audioMime;
+        }
+        await axios.post(`${BOT_SERVICE_URL}/webhook`, payload);
       } catch (err) {
         console.error('Failed to forward message to bot-service:', err.message);
       }

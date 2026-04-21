@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from gemini_client import process_message, summarize_text, resolve_timezone
+from gemini_client import process_message, summarize_text, resolve_timezone, transcribe_audio
 from cost_tracker import get_monthly_summary, COST_LOGS_DIR
 from history_manager import append_message, read_history_since, HISTORIES_DIR
 from policy_manager import (
@@ -56,10 +56,12 @@ class IncomingMessage(BaseModel):
     group_id: str
     sender: str
     sender_jid: str = ""
-    text: str
+    text: str = ""
     timestamp: str
     is_bot_mentioned: bool = False
     is_reply_to_bot: bool = False
+    audio_data: str | None = None
+    audio_mime: str | None = None
 
 
 class GroupJoined(BaseModel):
@@ -197,6 +199,17 @@ async def webhook(msg: IncomingMessage):
     async with _seq_lock:
         seq = _latest_seq.get(msg.group_id, 0) + 1
         _latest_seq[msg.group_id] = seq
+
+    # Transcribe audio before anything else so history and processing use the text
+    if msg.audio_data and not msg.text:
+        try:
+            transcription = await transcribe_audio(
+                msg.group_id, msg.audio_data, msg.audio_mime or "audio/ogg; codecs=opus"
+            )
+            msg = msg.model_copy(update={"text": f"[voice] {transcription}"})
+        except Exception as e:
+            print(f"Audio transcription failed: {e}")
+            msg = msg.model_copy(update={"text": "[voice message]"})
 
     await append_message(msg.group_id, msg.sender, msg.text, msg.timestamp)
 

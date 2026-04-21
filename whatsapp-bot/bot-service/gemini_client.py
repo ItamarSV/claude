@@ -1,5 +1,7 @@
+import base64
 import os
 from google import genai
+from google.genai import types as genai_types
 from google.genai.types import (
     GenerateContentConfig,
     Tool,
@@ -198,6 +200,19 @@ async def resolve_timezone(text: str) -> str:
         contents=f'Convert this to an IANA timezone name. Reply with ONLY the IANA identifier (e.g. "Asia/Jerusalem", "Europe/London", "America/New_York"). Input: "{text}"',
         config=GenerateContentConfig(system_instruction="You are a timezone resolver. Reply with just the IANA timezone identifier, nothing else."),
     )
+    return _extract_text(response).strip()
+
+
+async def transcribe_audio(group_id: str, audio_data_b64: str, audio_mime: str) -> str:
+    audio_bytes = base64.b64decode(audio_data_b64)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=[
+            genai_types.Part(inline_data=genai_types.Blob(data=audio_bytes, mime_type=audio_mime)),
+            genai_types.Part(text="Transcribe this voice message. Return only the spoken words, nothing else."),
+        ],
+    )
+    _track_cost(group_id, response)
     return _extract_text(response).strip()
 
 
