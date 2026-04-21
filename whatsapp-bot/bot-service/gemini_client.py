@@ -238,6 +238,6 @@ def _track_cost(group_id: str, response) -> None:
     if usage:
         record_call(
             group_id=group_id,
-            input_tokens=getattr(usage, "prompt_token_count", 0),
-            output_tokens=getattr(usage, "candidates_token_count", 0),
+            input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
         )
