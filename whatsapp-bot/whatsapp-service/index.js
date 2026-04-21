@@ -162,7 +162,15 @@ async function connectToWhatsApp() {
 
       if (!text && !audioData) continue;
 
-      const mentionedJids = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
+      // contextInfo can live under any message type
+      const contextInfo =
+        msg.message.extendedTextMessage?.contextInfo ||
+        msg.message.audioMessage?.contextInfo ||
+        msg.message.imageMessage?.contextInfo ||
+        msg.message.videoMessage?.contextInfo ||
+        {};
+
+      const mentionedJids = contextInfo.mentionedJid || [];
       const isBotMentioned =
         (botNumber && mentionedJids.some(jid => jid.startsWith(botNumber + '@'))) ||
         (botLid && mentionedJids.some(jid => jid.startsWith(botLid + '@'))) ||
@@ -171,7 +179,7 @@ async function connectToWhatsApp() {
         console.log(`mentions: ${JSON.stringify(mentionedJids)} isBotMentioned=${isBotMentioned} botNumber=${botNumber} botLid=${botLid}`);
       }
 
-      const quotedParticipant = msg.message.extendedTextMessage?.contextInfo?.participant || '';
+      const quotedParticipant = contextInfo.participant || '';
       const isReplyToBot =
         (botNumber && quotedParticipant.startsWith(botNumber + '@')) ||
         (botLid && quotedParticipant.startsWith(botLid + '@')) ||
