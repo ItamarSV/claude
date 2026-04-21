@@ -16,7 +16,9 @@ bot-service       (Python/FastAPI, port 8000)
       │  google-genai SDK
       ▼
 gemini-2.5-flash  ──► GoogleSearch built-in tool (real-time info)
-                  └──► get_group_history function declaration (reads .txt file)
+                  ├──► get_group_history function declaration (reads .txt file)
+                  ├──► set_reminder function declaration (schedules via APScheduler)
+                  └──► update_timezone function declaration (updates user_timezones.json)
 ```
 
 Both services run as systemd units on a GCP VM (no Docker).
@@ -31,11 +33,17 @@ Both services run as systemd units on a GCP VM (no Docker).
 | History routing | Gemini tool use | Model decides when history is needed; no double API calls for simple questions |
 | Cost tracking | Per-call log in monthly .txt | Auditable, readable, easy to parse for future monthly report |
 
-## Admin Commands (Main group only)
-| Command | What it does |
-|---|---|
-| `/summarize` | Summarizes today's conversation in the current group; in Main group summarizes all groups |
-| `/usage` | Shows this month's Gemini API call count, token usage, and cost per group (Main group only) |
+## Admin Commands
+| Command | Where | What it does |
+|---|---|---|
+| `/summarize` | Any group | Summarizes today's conversation; in Main summarizes all groups |
+| `/usage` | Main only | This month's Gemini call count, tokens, and cost per group |
+| `/reminders` | Any group | Lists pending reminders for that group; in Main lists all groups |
+| `/reminders cancel #id` | Any group | Cancels a reminder (own group only; Main can cancel any) |
+
+**Natural language commands (via Gemini):**
+- `@bot remind me at 18:00 to call David` — sets a reminder with optional repeat
+- `@bot set my timezone to London` — updates the user's timezone across all groups
 
 ## Known Limitations
 - Baileys is unofficial — small risk of WhatsApp banning the number

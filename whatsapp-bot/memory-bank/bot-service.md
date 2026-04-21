@@ -1,18 +1,20 @@
 # Bot Service
 
-**Files:** `bot-service/main.py`, `gemini_client.py`, `history_manager.py`, `cost_tracker.py`, `policy_manager.py`
+**Files:** `bot-service/main.py`, `gemini_client.py`, `history_manager.py`, `cost_tracker.py`, `policy_manager.py`, `reminders.py`, `timezone_manager.py`
 **Runtime:** Python 3.12, FastAPI + Uvicorn, runs in a `venv/`
 
 ## Webhook Flow (`main.py`)
-1. `POST /webhook` receives `{group_id, sender, text, timestamp, is_bot_mentioned, is_reply_to_bot}` from whatsapp-service
+1. `POST /webhook` receives `{group_id, sender, sender_jid, text, timestamp, is_bot_mentioned, is_reply_to_bot}` from whatsapp-service
 2. Assigns a per-group sequence number (policy 2 — last-message-only)
 3. `append_message()` writes the user message to the group's history file immediately
 4. Checks group policy (see Policy System below) — may skip processing
-5. Checks for admin commands (`/summarize`, `/usage`) — handled directly, skip Gemini
-6. `process_message()` calls Gemini and gets a reply
-7. Checks sequence number again — skips reply if a newer message arrived (policy 2)
-8. Reply is POSTed to whatsapp-service `POST /send`
-9. Bot reply is also saved to history via `append_message()` (sender = "Bot")
+5. Checks reminder session (`_pending_reminder`) — handles yes/no confirmation and repeat flow
+6. Checks slash commands (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini
+7. `process_message()` calls Gemini and gets a reply
+8. Checks sequence number again — skips reply if a newer message arrived (policy 2)
+9. Handles special Gemini reply types: `set_reminder`, `update_timezone`, web search dict
+10. Reply is POSTed to whatsapp-service `POST /send`
+11. Bot reply is also saved to history via `append_message()` (sender = "Bot")
 
 History is always saved regardless of whether the bot can respond (Gemini errors don't lose history).
 
@@ -56,7 +58,7 @@ Import: `from google import genai`
 Current model: `gemini-2.5-flash` (free tier available).
 
 ## Gemini Tool Use Pattern (`gemini_client.py`)
-Two function declarations registered: `get_group_history` and `request_web_search`.
+Four function declarations registered: `get_group_history`, `request_web_search`, `set_reminder`, `update_timezone`.
 
 **Three-phase call pattern:**
 1. **First call:** send the user's message with both function declarations available
@@ -74,6 +76,12 @@ Two function declarations registered: `get_group_history` and `request_web_searc
 **`_web_search_call()`:** separate Gemini call using only `GoogleSearch` built-in tool (no function declarations — they conflict).
 
 **`_pending_web_search`:** per-group dict `{group_id: original_user_message}` — cleared on any confirmation response or unrelated message.
+
+**`set_reminder`** → returns `{"type": "set_reminder", "message", "iso_time", "repeat_interval"}` — handled in `main.py` session flow.
+
+**`update_timezone`** → returns `{"type": "update_timezone", "timezone"}` — resolved via `resolve_timezone()` Gemini call, saved to `user_timezones.json` by JID.
+
+**Today's date** is injected into every `process_message` call (`[Today is Monday 2026-04-21]`) so Gemini can resolve relative times in reminders.
 
 Gemini decides autonomously whether history or search is needed.
 
@@ -103,6 +111,30 @@ Each call appends one line to `cost_logs/YYYY-MM.txt`:
 
 `get_monthly_summary(year, month)` returns totals + per-group breakdown (`calls`, `tokens`, `cost`).
 
+## Reminders (`reminders.py`)
+- **APScheduler** `AsyncIOScheduler` with `SQLAlchemyJobStore` → SQLite (`reminders.db`) — survives restarts
+- `add_reminder(group_id, message, fire_at_utc, mention_jids, display_tz, repeat_interval)` → returns job ID
+- `fire_reminder(group_id, message, mention_jids)` — async job function, calls whatsapp-service `/send` with `mention_jids`
+- `list_reminders(group_id=None)` — None = all groups
+- `cancel_reminder(short_id, allowed_group_id=None)` — validates group ownership unless `allowed_group_id=None`
+- Repeat intervals: `"weekly"`, `"daily"`, `"every N minutes"`, `"monthly"`, `"yearly"` → mapped to `IntervalTrigger`
+- Scheduler started/stopped in FastAPI lifespan
+
+**Reminder session state** in `main.py` (`_pending_reminder[group_id]`):
+- `awaiting_confirm` — bot asked "set reminder?", waiting for yes/no
+- `awaiting_repeat` — reminder confirmed, bot asked about repeat, waiting for response
+- `_awaiting_reply` is set so mention-only groups don't block the yes/no reply
+
+## Timezones (`timezone_manager.py`)
+- Stored in `user_timezones.json` keyed by participant **JID** (stable, unlike display names)
+- Default: `Asia/Jerusalem` for all users
+- `get_user_timezone(jid)`, `set_user_timezone(jid, tz)` — global across all groups
+- `compute_reminder_jobs(participants, fire_at_naive, setter_jid)`:
+  - Groups participants by timezone
+  - Setter's timezone → group message (no @mention)
+  - Other timezones → separate job with @mention at the same clock time in their timezone
+- `resolve_timezone(text)` in `gemini_client.py` — Gemini converts "London" / "Tel Aviv" → IANA name
+
 ## Admin Commands
 Handled in `main.py` before calling `process_message()`, so they bypass Gemini entirely.
 
@@ -110,7 +142,16 @@ Handled in `main.py` before calling `process_message()`, so they bypass Gemini e
 |---|---|---|
 | `/summarize` | Any group | Summarizes today's messages in that group via Gemini. In Main: summarizes all active groups combined. |
 | `/usage` | Main group only | Returns this month's Gemini call count, token usage, and cost, broken down per group. |
+| `/reminders` | Any group | Lists pending reminders for that group. In Main: lists all groups. |
+| `/reminders cancel #id` | Any group | Cancels reminder (own group only). Main can cancel any. |
+
+## whatsapp-service endpoints (relevant to bot-service)
+- `POST /send` — now accepts `mention_jids: [jid]` for @mentions when firing reminders
+- `GET /group-participants?group_id=` — returns `[{jid, name}]` for reminder timezone computation
+- `GET /group-name?group_id=` — used for backfilling group names
+- Webhook now includes `sender_jid` (from `msg.key.participant`) alongside `sender` (display name)
 
 ## Python Environment
 Dependencies installed in `venv/`. Systemd service uses `venv/bin/uvicorn` directly.
 To reinstall: `cd bot-service && venv/bin/pip install -r requirements.txt`
+New packages added: `apscheduler>=3.10`, `SQLAlchemy`, `tzdata`
