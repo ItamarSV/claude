@@ -90,6 +90,13 @@ Triggered via `group-participants.update` when bot is **removed** from a group. 
 
 **Known Baileys behavior:** `group-participants.update` with `action=add` does NOT reliably fire when the bot itself is re-added. The `groups.upsert` event is the primary fallback — it fires when the bot rejoins and triggers the policy question immediately without needing a group message first.
 
+### `POST /typing`
+Called by bot-service to show the "typing…" indicator in a group while processing.
+```json
+{ "group_id": "120363abc@g.us" }
+```
+Calls `sock.sendPresenceUpdate('composing', group_id)`. WhatsApp automatically clears the indicator when the bot sends its reply. Returns `{ "ok": true/false }` silently — errors are ignored so they never block the real work.
+
 ### `GET /health`
 Returns `{ "ok": true }`. Used to verify the service is alive.
 

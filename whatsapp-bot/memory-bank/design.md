@@ -45,6 +45,7 @@ sequenceDiagram
 
     BS->>BS: Assign sequence number
     alt audio_data present
+        BS->>WS: POST /typing (composing indicator)
         BS->>GM: transcribe_audio (inline bytes)
         GM-->>BS: spoken text
         BS->>BS: text = "[voice] <transcription>"
@@ -52,35 +53,51 @@ sequenceDiagram
 
     BS->>BS: append_message → group_histories/<id>.txt
     BS->>BS: Check policy (new/pending/active/listener/mention-only)
-    BS->>BS: Check reminder session (awaiting_confirm / awaiting_repeat)
-    BS->>BS: Check slash commands (/usage, /summarize, /reminders)
 
-    BS->>BS: Build reminders context string
-    BS->>GM: process_message (text + recent history + time + reminders context)
+    alt Active dialog session for this user
+        BS->>WS: POST /typing
+        BS->>GM: handle_session_message (response_schema → JSON)
+        GM-->>BS: {action, reply, interval?}
+        alt action = proceed
+            BS->>BS: _execute_session (web_search or reminder_repeat)
+        else action = cancel
+            BS->>BS: close session
+        else action = ignore
+            BS->>BS: session stays open, reply answers their question
+        end
+        BS->>WS: POST /send
+    else Slash commands (/usage, /summarize, /reminders)
+        BS->>BS: handle directly, skip Gemini
+        note over BS: /summarize calls _start_typing before Gemini
+    else Normal message
+        BS->>BS: Build reminders context string
+        BS->>WS: POST /typing
+        BS->>GM: process_message (text + recent history + time + reminders context)
 
-    alt Gemini calls get_group_history
-        BS->>BS: read full history file
-        BS->>GM: second call with full history
-    else Gemini calls request_web_search
-        BS-->>WA: "Want me to search?" (via /send)
-        WA->>BS: "yes" / "no"
-        BS->>GM: _web_search_call (GoogleSearch tool)
-    else Gemini calls set_reminder
-        BS-->>WA: "Should I set a reminder for X? (yes/no)"
-        WA->>BS: yes
-        BS->>BS: compute_reminder_jobs (per-timezone)
-        BS->>BS: add_reminder → APScheduler → reminders.db
-    else Gemini calls cancel_reminder
-        BS->>BS: _cancel_reminder_job (group-scoped)
-    else Gemini calls update_timezone
-        BS->>BS: set_user_timezone → user_timezones.json
+        alt Gemini calls get_group_history
+            BS->>BS: read full history file
+            BS->>GM: second call with full history
+        else Gemini calls request_web_search
+            BS->>BS: open web_search dialog session
+            BS->>WS: POST /send (Gemini-written approval question, user's language)
+        else Gemini calls set_reminder
+            BS->>BS: compute_reminder_jobs (per-timezone)
+            BS->>BS: add_reminder → APScheduler → reminders.db
+            BS->>WS: POST /send (Gemini-written confirmation, user's language)
+            note over BS: if repeat_interval="ask", open reminder_repeat session
+        else Gemini calls cancel_reminder
+            BS->>BS: _cancel_reminder_job (group-scoped)
+            BS->>WS: POST /send (Gemini-written confirmation, user's language)
+        else Gemini calls update_timezone
+            BS->>BS: set_user_timezone → user_timezones.json
+            BS->>WS: POST /send (Gemini-written confirmation, user's language)
+        end
+
+        BS->>BS: sequence check (skip if newer message arrived)
+        BS->>WS: POST /send {group_id, text}
+        WS->>WA: Message delivered
+        BS->>BS: append_message (Bot reply)
     end
-
-    GM-->>BS: text reply
-    BS->>BS: sequence check (skip if newer message arrived)
-    BS->>WS: POST /send {group_id, text}
-    WS->>WA: Message delivered
-    BS->>BS: append_message (Bot reply)
 ```
 
 ---
@@ -202,36 +219,63 @@ sequenceDiagram
 User: "remind me to call mom at 8pm"
                   │
                   ▼
-           Gemini → set_reminder{message, iso_time, repeat_interval}
+           Gemini → set_reminder{message, iso_time, repeat_interval, confirmation_message}
                   │
                   ▼
-     Bot: "Should I set a reminder for Mon Apr 21 at 20:00 — call mom? (yes/no)"
-     _awaiting_reply set so mention-only groups don't block the yes/no
+  compute_reminder_jobs (per-timezone, multi-job)
+  add_reminder → APScheduler → reminders.db
                   │
-         ┌────────┴────────┐
-        yes               no
-         │                 │
-         ▼                 ▼
-  compute_reminder_jobs  "Got it, no reminder."
-  (per-timezone, multi-job)
-         │
-         ▼
-  add_reminder → APScheduler
-         │
+                  ▼
+  Bot sends confirmation_message (Gemini-written, user's language)
+  e.g. "Done! I'll remind you to call mom tonight at 8."
+                  │
   if repeat_interval == "ask":
          │
          ▼
-  Bot: "Should this repeat? If yes, say how often"
+  open reminder_repeat dialog session
+  Bot sends repeat_question (Gemini-written, user's language)
+  e.g. "Should this repeat? Just say how often."
          │
-    ┌────┴──────────────────────┐
-   no              text with repeat pattern
-    │                     │
-    ▼                     ▼
- "no repeat"     resolve_repeat_interval(text) → Gemini
-                          │
-                     CronTrigger or IntervalTrigger
-                          │
-                     re-add with repeat
+    ┌────┴────────────────────────┐
+   no / one-time              frequency given
+    │                              │
+    ▼                              ▼
+  session cancel            resolve_repeat_interval → Gemini
+  "Got it, one-time."             │
+                           CronTrigger or IntervalTrigger
+                           (re-schedules job with repeat)
+```
+
+## Dialog Session State Machine
+
+```
+                     Normal message
+                           │
+                           ▼
+               session_manager.get(group_id, user_jid)
+                    ┌──────┴──────┐
+               session?          no session
+                    │                 │
+                    ▼           check ghost?
+            handle_session_message        │
+            (response_schema JSON)     ┌──┴──────┐
+                    │               ghost &    no ghost
+            ┌───────┼───────┐       _is_yes?      │
+         proceed  cancel  ignore       │        normal flow
+            │       │       │          ▼
+            ▼       ▼       ▼    revive_ghost → execute
+      _execute   close   session      (5-min timer restarts)
+      _session   send    stays open
+                farewell  send reply
+                          (user's question answered)
+
+Session timeout (5 min):
+  close_to_ghost → ghost stored for 120s
+  generate_timeout_message → send @mention (user's language)
+
+Ghost window (2 min after timeout):
+  User sends yes → revive_ghost → execute immediately
+  After 2 min: ghost expires, user must re-trigger
 ```
 
 ---
@@ -246,8 +290,9 @@ whatsapp-bot/
 │   └── .baileys_auth/        # Session (gitignored, local)
 │
 ├── bot-service/
-│   ├── main.py               # FastAPI, webhook handler, slash commands, reminder sessions
+│   ├── main.py               # FastAPI, webhook handler, slash commands, session routing
 │   ├── gemini_client.py      # Gemini calls, tool declarations, transcription, timezone
+│   ├── session_manager.py    # Dialog sessions (web_search/reminder_repeat), ghost revival
 │   ├── history_manager.py    # Append/read group .txt files, asyncio write locks
 │   ├── reminders.py          # APScheduler, add/list/cancel, CronTrigger/IntervalTrigger
 │   ├── policy_manager.py     # Group states (new/pending/active), mention-only, listener

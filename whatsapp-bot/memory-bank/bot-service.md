@@ -6,16 +6,18 @@
 ## Webhook Flow (`main.py`)
 1. `POST /webhook` receives `{group_id, sender, sender_jid, text, timestamp, is_bot_mentioned, is_reply_to_bot, audio_data?, audio_mime?}`
 2. Assigns a per-group sequence number (last-message-only policy)
-3. **If `audio_data` present and no text:** `transcribe_audio()` → `msg.text = "[voice] <transcription>"`
+3. **If `audio_data` present and no text:** `_start_typing()` → `transcribe_audio()` → `msg.text = "[voice] <transcription>"`
 4. `append_message()` writes to history immediately
 5. **Policy checks** — skip listener groups; mention-only filter (session owners bypass it)
 6. **Session routing** (see Dialog Session Manager below) — runs before slash commands
-7. **Slash commands** (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini
+7. **Slash commands** (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini; `/summarize` calls `_start_typing()` before the Gemini summarize call
 8. Fetches pending reminders → formats as context string for Gemini
-9. `process_message()` calls Gemini
+9. `_start_typing()` → `process_message()` calls Gemini
 10. Checks sequence number — skips if newer message arrived
 11. Handles structured Gemini results: `web_search` → open session; `set_reminder` → schedule directly; `update_timezone` → save; `cancel_reminder` → direct cancel
 12. Reply POSTed to `/send`, saved to history
+
+**Typing indicator:** `_start_typing(group_id)` fires-and-forgets a `POST /typing` to whatsapp-service (5s timeout, errors silently ignored). Called before any slow async operation: audio transcription, session handler, Gemini call, summarize. WhatsApp auto-clears the indicator when the bot sends its reply.
 
 History is always saved regardless of whether the bot can respond (Gemini errors don't lose history).
 
@@ -113,7 +115,9 @@ Five function declarations registered: `get_group_history`, `request_web_search`
 
 **`request_web_search`** includes a `question` field — Gemini writes a contextual approval question (e.g. *"The Champions League final was yesterday — want me to look up the result?"*). No hardcoded text, no buttons.
 
-**`set_reminder`** includes `confirmation_message` — Gemini writes the natural confirmation (e.g. *"Done! I'll remind you to call mom tonight at 8pm."*). Reminder is set directly without a confirmation session. A `reminder_repeat` session is only opened when `repeat_interval="ask"`.
+**`set_reminder`** includes `confirmation_message` — Gemini writes the natural confirmation in the user's language. Reminder is set directly without a confirmation session. A `reminder_repeat` session is only opened when `repeat_interval="ask"`.
+
+**Language enforcement:** The system prompt contains `IMPORTANT: Always reply in the same language the user wrote in.` All user-facing function declaration fields (`confirmation_message`, `cancellation_message`, `question`, `repeat_question`) also specify "in the SAME LANGUAGE as the user's message" in their descriptions. `generate_timeout_message` also passes a language hint.
 
 **`web_search_call(group_id, user_message) -> str`:** separate Gemini call using only `GoogleSearch` built-in tool (no function declarations — they conflict). Called by `_execute_session` when web_search session proceeds.
 
@@ -124,10 +128,12 @@ Five function declarations registered: `get_group_history`, `request_web_search`
 ## Gemini Utility Functions (`gemini_client.py`)
 
 **`handle_session_message(session_type, session_question, session_data, user_text, recent_history) -> dict`**
-Single Gemini call for active dialog sessions. Returns `{"action": "proceed"|"cancel"|"ignore", "reply": str, "interval"?: str}`.
+Single Gemini call for active dialog sessions. Uses `response_mime_type="application/json"` + `response_schema` to guarantee valid JSON output. Returns `{"action": "proceed"|"cancel"|"ignore", "reply": str, "interval"?: str}`.
 - `proceed` — user approved; for `reminder_repeat`, also returns `interval`
 - `cancel` — user declined or wants to move on
 - `ignore` — unrelated message; `reply` is the normal answer to their question; session stays open silently
+
+Prompt explicitly states: for `web_search`, any affirmative response (yes/כן/sure/go ahead) → `proceed`. Only use `ignore` if the message is completely unrelated.
 
 **`generate_timeout_message(session_type, session_data, user_name) -> str`**
 Generates a natural @mention timeout message, e.g. *"@David I didn't get your approval, so I won't search the NBA results."*
