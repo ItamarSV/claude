@@ -51,9 +51,10 @@ _web_search_func = FunctionDeclaration(
     parameters={
         "type": "OBJECT",
         "properties": {
-            "reason": {"type": "STRING", "description": "Why internet access is needed"}
+            "reason": {"type": "STRING", "description": "Why internet access is needed"},
+            "question": {"type": "STRING", "description": "Natural language question to ask the user for approval, tailored to their request. E.g. 'The Champions League final was yesterday — want me to look up the result?'"},
         },
-        "required": ["reason"],
+        "required": ["reason", "question"],
     },
 )
 
@@ -72,8 +73,9 @@ _set_reminder_func = FunctionDeclaration(
             "message": {"type": "STRING", "description": "What to remind about"},
             "iso_time": {"type": "STRING", "description": "Naive ISO 8601 local datetime, e.g. '2026-04-27T20:00:00'"},
             "repeat_interval": {"type": "STRING", "description": "Repeat interval: 'weekly', 'daily', 'every 30 minutes', 'monthly', 'yearly', etc. Omit if no repeat. Use 'ask' if repeat intent is possible but unclear."},
+            "confirmation_message": {"type": "STRING", "description": "Natural language confirmation to send to the user, e.g. 'Done! I'll remind you to call mom tonight at 8pm.'"},
         },
-        "required": ["message", "iso_time"],
+        "required": ["message", "iso_time", "confirmation_message"],
     },
 )
 
@@ -112,23 +114,7 @@ _base_config = GenerateContentConfig(
     tools=[Tool(function_declarations=[_history_func, _web_search_func, _set_reminder_func, _update_timezone_func, _cancel_reminder_func])],
 )
 
-# Per-group pending web search state: group_id -> original message
-_pending_web_search: dict[str, str] = {}
-
-
 async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "", reminders_context: str = "") -> str:
-    # Check if this is a reply to a pending web search confirmation
-    if group_id in _pending_web_search:
-        clean = text.strip().lower()
-        if clean in ("yes", "yeah", "sure", "yep", "כן", "אוקי", "ok", "web_search_yes", "1"):
-            original = _pending_web_search.pop(group_id)
-            return await _web_search_call(group_id, original)
-        elif clean in ("no", "nope", "לא", "web_search_no", "2"):
-            _pending_web_search.pop(group_id, None)
-            return "Got it, skipping the web search."
-        else:
-            _pending_web_search.pop(group_id, None)
-
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
     from timezone_manager import get_user_timezone
@@ -172,13 +158,11 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                 return _extract_text(followup)
 
             if fc.name == "request_web_search":
-                _pending_web_search[group_id] = user_message
+                args = dict(fc.args) if fc.args else {}
                 return {
-                    "text": "I need internet access to answer this accurately. Want me to search the web?",
-                    "buttons": [
-                        {"id": "web_search_yes", "text": "🔍 Yes, search"},
-                        {"id": "web_search_no", "text": "❌ No thanks"},
-                    ],
+                    "type": "web_search",
+                    "question": args.get("question", "I need to search the web for this — is that okay?"),
+                    "original_message": user_message,
                 }
 
             if fc.name == "set_reminder":
@@ -207,7 +191,7 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
     return _extract_text(response)
 
 
-async def _web_search_call(group_id: str, user_message: str) -> str:
+async def web_search_call(group_id: str, user_message: str) -> str:
     response = client.models.generate_content(
         model=MODEL,
         contents=user_message,
@@ -218,6 +202,80 @@ async def _web_search_call(group_id: str, user_message: str) -> str:
     )
     _track_cost(group_id, response)
     return _extract_text(response)
+
+
+async def handle_session_message(
+    session_type: str,
+    session_question: str,
+    session_data: dict,
+    user_text: str,
+    recent_history: str = "",
+) -> dict:
+    """
+    Classify user's reply against an open dialog session.
+    Returns {"action": "proceed"|"cancel"|"ignore", "reply": str, "interval"?: str}
+    - proceed: user approved / gave required information
+    - cancel:  user declined or wants to move on
+    - ignore:  unrelated message — reply answers their question, session stays open silently
+    For reminder_repeat proceed, also returns "interval" with the extracted repeat string.
+    """
+    type_hint = {
+        "web_search": "The user needs to approve an internet search.",
+        "reminder_repeat": "The user needs to specify a repeat interval for a reminder (or say no to skip repeating).",
+    }.get(session_type, "")
+
+    history_section = f"Recent conversation:\n{recent_history}\n\n" if recent_history else ""
+
+    prompt = (
+        f"{history_section}"
+        f"You have an open dialog session with this user.\n"
+        f"Session type: {session_type}\n"
+        f"{type_hint}\n"
+        f"Question already asked to user: \"{session_question}\"\n"
+        f"Session context: {session_data}\n\n"
+        f"The user just sent: \"{user_text}\"\n\n"
+        f"Determine their intent and generate a natural response. Rules:\n"
+        f"- \"proceed\": user approved or gave the required information\n"
+        f"- \"cancel\": user declined, said no, or clearly wants to move on\n"
+        f"- \"ignore\": message is unrelated — answer their question naturally, do NOT mention the pending session\n\n"
+        f"For reminder_repeat with proceed: also extract the repeat interval from their message.\n\n"
+        f"Reply with ONLY a JSON object:\n"
+        f"{{\"action\": \"proceed\"|\"cancel\"|\"ignore\", \"reply\": \"...\", \"interval\": \"weekly|daily|every Monday|...\"}}\n"
+        f"(\"interval\" only for reminder_repeat proceed, omit otherwise)"
+    )
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+    )
+    _track_cost("_sessions", response)
+    raw = _extract_text(response).strip()
+    import json as _json, re as _re
+    m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+    if m:
+        try:
+            return _json.loads(m.group())
+        except Exception:
+            pass
+    return {"action": "ignore", "reply": raw}
+
+
+async def generate_timeout_message(session_type: str, session_data: dict, user_name: str) -> str:
+    descriptions = {
+        "web_search": f"search the web for: {session_data.get('original_message', 'your request')}",
+        "reminder_repeat": f"set the repeat interval for the reminder: {session_data.get('message', 'your reminder')}",
+    }
+    desc = descriptions.get(session_type, "complete your request")
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=(
+            f"Write a short, friendly WhatsApp message to @{user_name} saying you didn't get "
+            f"their response in time, so you won't {desc}. "
+            f"Start with @{user_name}. One sentence. No quotes around the output."
+        ),
+    )
+    return _extract_text(response).strip()
 
 
 async def resolve_repeat_interval(text: str) -> dict | None:
