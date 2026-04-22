@@ -398,7 +398,6 @@ async def webhook(msg: IncomingMessage):
             else:
                 await _start_typing(msg.group_id)
                 reply = await summarize_text(msg.group_id, f"Summarize today's conversation in this group:\n\n{chunk}")
-            )
         if _latest_seq.get(msg.group_id) == seq:
             await _send(msg.group_id, reply)
             await append_message(msg.group_id, "Bot", reply, datetime.now(timezone.utc).isoformat())
