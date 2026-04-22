@@ -36,22 +36,23 @@ async def fire_reminder(group_id: str, message: str, mention_jids: list, repeat_
             print(f"Failed to fire reminder: {e}")
 
 
-def _repeat_trigger(repeat_interval: str):
+def _repeat_trigger(repeat_interval: str, start_date: datetime | None = None):
     r = repeat_interval.lower()
     m = re.search(r"(\d+)", r)
     n = int(m.group(1)) if m else 1
+    kw = {"start_date": start_date} if start_date else {}
     if "minute" in r:
-        return IntervalTrigger(minutes=n)
+        return IntervalTrigger(minutes=n, **kw)
     if "hour" in r:
-        return IntervalTrigger(hours=n)
+        return IntervalTrigger(hours=n, **kw)
     if "day" in r or "daily" in r:
-        return IntervalTrigger(days=n if m else 1)
+        return IntervalTrigger(days=n if m else 1, **kw)
     if "week" in r or "weekly" in r:
-        return IntervalTrigger(weeks=n if m else 1)
+        return IntervalTrigger(weeks=n if m else 1, **kw)
     if "month" in r or "monthly" in r:
-        return IntervalTrigger(days=30 * n)
+        return IntervalTrigger(days=30 * n, **kw)
     if "year" in r or "annual" in r or "yearly" in r:
-        return IntervalTrigger(days=365 * n)
+        return IntervalTrigger(days=365 * n, **kw)
     return None
 
 
@@ -59,14 +60,17 @@ def _build_trigger(repeat_spec: dict | None, repeat_interval: str | None, fire_a
     if repeat_spec:
         t = repeat_spec.get("type")
         if t == "cron":
-            return CronTrigger(day_of_week=repeat_spec.get("day_of_week"),
-                               hour=repeat_spec.get("hour"),
-                               minute=repeat_spec.get("minute", 0))
+            # Use fire_at_utc hour/minute so the cron fires at the correct clock time
+            return CronTrigger(
+                day_of_week=repeat_spec.get("day_of_week"),
+                hour=fire_at_utc.hour,
+                minute=fire_at_utc.minute,
+            )
         if t == "interval":
             kwargs = {k: v for k, v in repeat_spec.items() if k != "type"}
-            return IntervalTrigger(**kwargs)
+            return IntervalTrigger(start_date=fire_at_utc, **kwargs)
     if repeat_interval:
-        t = _repeat_trigger(repeat_interval)
+        t = _repeat_trigger(repeat_interval, start_date=fire_at_utc)
         if t:
             return t
     return DateTrigger(run_date=fire_at_utc)
