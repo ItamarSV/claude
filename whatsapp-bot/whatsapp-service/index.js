@@ -63,6 +63,7 @@ async function connectToWhatsApp() {
       botLid = sock.user?.lid?.split(':')[0] || sock.user?.lid?.split('@')[0] ||
                state.creds?.me?.lid?.split(':')[0] || state.creds?.me?.lid?.split('@')[0] || null;
       console.log(`WhatsApp connected. botNumber=${botNumber} botLid=${botLid}`);
+      try { await axios.post(`${BOT_SERVICE_URL}/bot-online`); } catch (_) {}
     }
   });
 
@@ -200,6 +201,7 @@ async function connectToWhatsApp() {
           timestamp,
           is_bot_mentioned: isBotMentioned,
           is_reply_to_bot: isReplyToBot,
+          message_key: { id: msg.key.id, remote_jid: jid, participant: msg.key.participant || '' },
         };
         if (audioData) {
           payload.audio_data = audioData;
@@ -257,6 +259,23 @@ app.get('/qr', async (_req, res) => {
     `);
   } catch (e) {
     res.status(500).send('Failed to generate QR image.');
+  }
+});
+
+app.post('/react', async (req, res) => {
+  const { group_id, message_key, emoji } = req.body;
+  if (!group_id || !message_key || !emoji || !sock) return res.json({ ok: false });
+  try {
+    await sock.sendMessage(group_id, {
+      react: {
+        text: emoji,
+        key: { remoteJid: message_key.remote_jid || group_id, fromMe: false, id: message_key.id, participant: message_key.participant || '' },
+      },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Failed to send reaction:', err.message);
+    res.json({ ok: false });
   }
 });
 

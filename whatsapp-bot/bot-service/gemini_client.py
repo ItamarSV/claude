@@ -41,18 +41,35 @@ _history_func = FunctionDeclaration(
     },
 )
 
-_web_search_func = FunctionDeclaration(
-    name="request_web_search",
+_direct_web_search_func = FunctionDeclaration(
+    name="web_search",
     description=(
-        "Call this when you need real-time or current information from the internet "
-        "that you don't have in your training data — e.g. today's weather, live news, "
-        "current prices, recent events, or anything time-sensitive."
+        "Search the internet immediately for real-time public information: weather, news, "
+        "sports scores, stock prices, recent events, factual lookups. Use this for any "
+        "general public query — no user confirmation needed. "
+        "Use request_web_search instead only if the search involves private information about a specific person."
     ),
     parameters={
         "type": "OBJECT",
         "properties": {
-            "reason": {"type": "STRING", "description": "Why internet access is needed"},
-            "question": {"type": "STRING", "description": "Natural language question asking the user for approval, in the SAME LANGUAGE as the user's message. E.g. if user wrote Hebrew, ask in Hebrew. Tailor it to their request."},
+            "query": {"type": "STRING", "description": "The search query"},
+        },
+        "required": ["query"],
+    },
+)
+
+_web_search_func = FunctionDeclaration(
+    name="request_web_search",
+    description=(
+        "Ask the user for approval before searching. Use ONLY when the search involves "
+        "private or sensitive information about a specific person. "
+        "For all general public queries (weather, news, sports, prices, events) use web_search instead."
+    ),
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "reason": {"type": "STRING", "description": "Why approval is needed"},
+            "question": {"type": "STRING", "description": "Approval question to ask the user, in the SAME LANGUAGE as their message."},
         },
         "required": ["reason", "question"],
     },
@@ -114,7 +131,7 @@ _cancel_reminder_func = FunctionDeclaration(
 
 _base_config = GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
-    tools=[Tool(function_declarations=[_history_func, _web_search_func, _set_reminder_func, _update_timezone_func, _cancel_reminder_func])],
+    tools=[Tool(function_declarations=[_history_func, _direct_web_search_func, _web_search_func, _set_reminder_func, _update_timezone_func, _cancel_reminder_func])],
 )
 
 async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "", reminders_context: str = "") -> str:
@@ -159,6 +176,9 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                 )
                 _track_cost(group_id, followup)
                 return _extract_text(followup)
+
+            if fc.name == "web_search":
+                return await web_search_call(group_id, user_message)
 
             if fc.name == "request_web_search":
                 args = dict(fc.args) if fc.args else {}
