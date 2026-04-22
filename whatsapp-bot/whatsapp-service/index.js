@@ -260,6 +260,17 @@ app.get('/qr', async (_req, res) => {
   }
 });
 
+app.post('/typing', async (req, res) => {
+  const { group_id } = req.body;
+  if (!group_id || !sock) return res.json({ ok: false });
+  try {
+    await sock.sendPresenceUpdate('composing', group_id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false });
+  }
+});
+
 app.get('/group-participants', async (req, res) => {
   const { group_id } = req.query;
   if (!group_id) return res.status(400).json({ error: 'group_id required' });

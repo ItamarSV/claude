@@ -74,6 +74,14 @@ class GroupLeft(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+async def _start_typing(group_id: str):
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            await client.post(f"{WHATSAPP_SERVICE_URL}/typing", json={"group_id": group_id})
+        except Exception:
+            pass
+
+
 async def _send(group_id: str, text: str, mention_jids: list | None = None):
     payload = {"group_id": group_id, "text": text}
     if mention_jids:
@@ -252,6 +260,7 @@ async def webhook(msg: IncomingMessage):
 
     # Transcribe audio before anything else
     if msg.audio_data and not msg.text:
+        await _start_typing(msg.group_id)
         try:
             transcription = await transcribe_audio(
                 msg.group_id, msg.audio_data, msg.audio_mime or "audio/ogg; codecs=opus"
@@ -304,6 +313,7 @@ async def webhook(msg: IncomingMessage):
         # Active session — slash commands bypass it, everything else goes through
         if session and not msg.text.strip().startswith("/"):
             recent = read_recent_history(msg.group_id, hours=2)
+            await _start_typing(msg.group_id)
             try:
                 result = await handle_session_message(
                     session.type, session.question, session.data, msg.text, recent
@@ -376,17 +386,18 @@ async def webhook(msg: IncomingMessage):
                 if chunk:
                     parts.append(f"=== {name} ===\n{chunk}")
             combined = "\n\n".join(parts) if parts else None
-            reply = (
-                "No activity in any group today."
-                if not combined
-                else await summarize_text(msg.group_id, f"Summarize today's activity across all groups:\n\n{combined}")
-            )
+            if not combined:
+                reply = "No activity in any group today."
+            else:
+                await _start_typing(msg.group_id)
+                reply = await summarize_text(msg.group_id, f"Summarize today's activity across all groups:\n\n{combined}")
         else:
             chunk = read_history_since(msg.group_id, today_start)
-            reply = (
-                "No conversation recorded today yet."
-                if not chunk
-                else await summarize_text(msg.group_id, f"Summarize today's conversation in this group:\n\n{chunk}")
+            if not chunk:
+                reply = "No conversation recorded today yet."
+            else:
+                await _start_typing(msg.group_id)
+                reply = await summarize_text(msg.group_id, f"Summarize today's conversation in this group:\n\n{chunk}")
             )
         if _latest_seq.get(msg.group_id) == seq:
             await _send(msg.group_id, reply)
@@ -441,6 +452,7 @@ async def webhook(msg: IncomingMessage):
             lines.append(f"#{j['id']} | {fire_str}{repeat} — {j['message']}")
         reminders_context = "\n".join(lines)
 
+    await _start_typing(msg.group_id)
     try:
         reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context)
     except Exception as e:
