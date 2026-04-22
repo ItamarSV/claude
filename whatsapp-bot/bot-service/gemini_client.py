@@ -211,6 +211,17 @@ async def web_search_call(group_id: str, user_message: str) -> str:
     return _extract_text(response)
 
 
+_SESSION_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "action": {"type": "STRING", "enum": ["proceed", "cancel", "ignore"]},
+        "reply": {"type": "STRING"},
+        "interval": {"type": "STRING"},
+    },
+    "required": ["action", "reply"],
+}
+
+
 async def handle_session_message(
     session_type: str,
     session_question: str,
@@ -227,8 +238,18 @@ async def handle_session_message(
     For reminder_repeat proceed, also returns "interval" with the extracted repeat string.
     """
     type_hint = {
-        "web_search": "The user needs to approve an internet search.",
-        "reminder_repeat": "The user needs to specify a repeat interval for a reminder (or say no to skip repeating).",
+        "web_search": (
+            "The user was asked to approve an internet search. "
+            "If they respond with YES, sure, okay, go ahead, or any affirmative — action MUST be 'proceed'. "
+            "If they say no, never mind, or clearly decline — action is 'cancel'. "
+            "Only use 'ignore' if the message is completely unrelated (e.g. they ask a different question)."
+        ),
+        "reminder_repeat": (
+            "The user needs to specify a repeat interval for a reminder, or say no to keep it one-time. "
+            "If they give any frequency (daily, weekly, every Monday, etc.) — action is 'proceed', extract the interval. "
+            "If they say no / one-time / don't repeat — action is 'cancel'. "
+            "Only use 'ignore' if the message is completely unrelated."
+        ),
     }.get(session_type, "")
 
     history_section = f"Recent conversation:\n{recent_history}\n\n" if recent_history else ""
@@ -238,34 +259,28 @@ async def handle_session_message(
         f"You have an open dialog session with this user.\n"
         f"Session type: {session_type}\n"
         f"{type_hint}\n"
-        f"Question already asked to user: \"{session_question}\"\n"
-        f"Session context: {session_data}\n\n"
+        f"Question already asked to user: \"{session_question}\"\n\n"
         f"The user just sent: \"{user_text}\"\n\n"
-        f"Determine their intent and generate a natural response. Rules:\n"
-        f"- \"proceed\": user approved or gave the required information\n"
-        f"- \"cancel\": user declined, said no, or clearly wants to move on\n"
-        f"- \"ignore\": message is unrelated — answer their question naturally, do NOT mention the pending session\n\n"
-        f"For reminder_repeat with proceed: also extract the repeat interval from their message.\n\n"
-        f"Reply with ONLY a JSON object:\n"
-        f"{{\"action\": \"proceed\"|\"cancel\"|\"ignore\", \"reply\": \"...\", \"interval\": \"weekly|daily|every Monday|...\"}}\n"
-        f"(\"interval\" only for reminder_repeat proceed, omit otherwise)"
+        f"Classify their intent and write a short natural reply in the same language as the user.\n"
+        f"For reminder_repeat proceed: include the extracted repeat interval in 'interval'."
     )
 
+    import json as _json
     response = client.models.generate_content(
         model=MODEL,
         contents=prompt,
-        config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+        config=GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            response_schema=_SESSION_RESPONSE_SCHEMA,
+        ),
     )
     _track_cost("_sessions", response)
     raw = _extract_text(response).strip()
-    import json as _json, re as _re
-    m = _re.search(r'\{.*\}', raw, _re.DOTALL)
-    if m:
-        try:
-            return _json.loads(m.group())
-        except Exception:
-            pass
-    return {"action": "ignore", "reply": raw}
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return {"action": "ignore", "reply": raw}
 
 
 async def generate_action_message(action: str, data: dict) -> str:
