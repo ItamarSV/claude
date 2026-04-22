@@ -477,6 +477,7 @@ async def webhook(msg: IncomingMessage):
 
         # ── Set reminder → schedule directly ─────────────────────────────────
         if rtype == "set_reminder":
+            print(f"[set_reminder] confirmation_message={reply.get('confirmation_message')!r} repeat_question={reply.get('repeat_question')!r}")
             scheduled = await _do_schedule_reminder(
                 group_id=msg.group_id,
                 message=reply["message"],
