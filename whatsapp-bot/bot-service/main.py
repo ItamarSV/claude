@@ -153,8 +153,8 @@ async def _open_session(session: DialogSession) -> bool:
 async def _execute_session(session: DialogSession, user_text: str, interval: str | None = None) -> str:
     """Execute the action a session was waiting to perform."""
     if session.type == "web_search":
-        original = session.data.get("original_message", user_text)
-        return await web_search_call(session.group_id, original)
+        search_context = session.data.get("search_context") or session.data.get("original_message", user_text)
+        return await web_search_call(session.group_id, search_context)
 
     if session.type == "reminder_repeat":
         if not interval:

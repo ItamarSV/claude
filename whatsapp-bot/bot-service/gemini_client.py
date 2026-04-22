@@ -186,6 +186,7 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                     "type": "web_search",
                     "question": args.get("question", "I need to search the web for this — is that okay?"),
                     "original_message": user_message,
+                    "search_context": contents,
                 }
 
             if fc.name == "set_reminder":
