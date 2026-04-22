@@ -456,7 +456,6 @@ async def webhook(msg: IncomingMessage):
             lines.append(f"#{j['id']} | {fire_str}{repeat} — {j['message']}")
         reminders_context = "\n".join(lines)
 
-    await _react(msg.group_id, msg.message_key, "🌍")
     await _start_typing(msg.group_id)
     try:
         reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context)
