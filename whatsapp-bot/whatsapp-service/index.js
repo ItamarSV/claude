@@ -227,15 +227,17 @@ app.post('/send', async (req, res) => {
   }
   try {
     const { mention_jids } = req.body;
+    let sentMsg;
     if (buttons && buttons.length > 0) {
       const lines = buttons.map((b, i) => `${i + 1}. ${b.text}`).join('\n');
-      await sock.sendMessage(group_id, { text: `${text}\n\n${lines}\n\nReply *1* or *2*` });
+      sentMsg = await sock.sendMessage(group_id, { text: `${text}\n\n${lines}\n\nReply *1* or *2*` });
     } else if (mention_jids && mention_jids.length > 0) {
-      await sock.sendMessage(group_id, { text, mentions: mention_jids });
+      sentMsg = await sock.sendMessage(group_id, { text, mentions: mention_jids });
     } else {
-      await sock.sendMessage(group_id, { text });
+      sentMsg = await sock.sendMessage(group_id, { text });
     }
-    res.json({ ok: true });
+    const message_key = sentMsg?.key ? { id: sentMsg.key.id, remote_jid: group_id, from_me: true, participant: '' } : null;
+    res.json({ ok: true, message_key });
   } catch (err) {
     console.error('Failed to send message:', err.message);
     res.status(500).json({ error: err.message });
@@ -258,6 +260,23 @@ app.get('/qr', async (_req, res) => {
     `);
   } catch (e) {
     res.status(500).send('Failed to generate QR image.');
+  }
+});
+
+app.post('/react', async (req, res) => {
+  const { group_id, message_key, emoji } = req.body;
+  if (!group_id || !message_key || !emoji || !sock) return res.json({ ok: false });
+  try {
+    await sock.sendMessage(group_id, {
+      react: {
+        text: emoji,
+        key: { remoteJid: message_key.remote_jid || group_id, fromMe: message_key.from_me ?? true, id: message_key.id, participant: message_key.participant || '' },
+      },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Failed to send reaction:', err.message);
+    res.json({ ok: false });
   }
 });
 

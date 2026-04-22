@@ -178,7 +178,8 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                 return _extract_text(followup)
 
             if fc.name == "web_search":
-                return await web_search_call(group_id, contents)
+                text = await web_search_call(group_id, contents)
+                return {"type": "web_search_result", "text": text}
 
             if fc.name == "request_web_search":
                 args = dict(fc.args) if fc.args else {}

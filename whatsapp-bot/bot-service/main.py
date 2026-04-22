@@ -82,7 +82,7 @@ async def _start_typing(group_id: str):
             pass
 
 
-async def _send(group_id: str, text: str, mention_jids: list | None = None):
+async def _send(group_id: str, text: str, mention_jids: list | None = None) -> dict:
     payload = {"group_id": group_id, "text": text}
     if mention_jids:
         payload["mention_jids"] = mention_jids
@@ -90,8 +90,20 @@ async def _send(group_id: str, text: str, mention_jids: list | None = None):
         try:
             r = await client.post(f"{WHATSAPP_SERVICE_URL}/send", json=payload)
             r.raise_for_status()
+            return r.json().get("message_key") or {}
         except Exception as e:
             print(f"Failed to send message: {e}")
+            return {}
+
+
+async def _react(group_id: str, message_key: dict, emoji: str):
+    if not message_key:
+        return
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            await client.post(f"{WHATSAPP_SERVICE_URL}/react", json={"group_id": group_id, "message_key": message_key, "emoji": emoji})
+        except Exception:
+            pass
 
 
 async def _fetch_participants(group_id: str) -> list[dict]:
@@ -346,7 +358,9 @@ async def webhook(msg: IncomingMessage):
                     reply = execute_result
 
             if reply and _latest_seq.get(msg.group_id) == seq:
-                await _send(msg.group_id, reply)
+                key = await _send(msg.group_id, reply)
+                if action == "proceed" and session.type == "web_search":
+                    await _react(msg.group_id, key, "🌍")
                 await append_message(msg.group_id, "Bot", reply, datetime.now(timezone.utc).isoformat())
             return {"ok": True}
 
@@ -469,6 +483,14 @@ async def webhook(msg: IncomingMessage):
     # Handle structured replies from Gemini
     if isinstance(reply, dict):
         rtype = reply.get("type")
+
+        # ── Direct web search result ──────────────────────────────────────────
+        if rtype == "web_search_result":
+            text = reply["text"]
+            key = await _send(msg.group_id, text)
+            await _react(msg.group_id, key, "🌍")
+            await append_message(msg.group_id, "Bot", text, datetime.now(timezone.utc).isoformat())
+            return {"ok": True}
 
         # ── Web search → open session ─────────────────────────────────────────
         if rtype == "web_search":
