@@ -175,6 +175,8 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                     "message": args.get("message", ""),
                     "iso_time": args.get("iso_time", ""),
                     "repeat_interval": args.get("repeat_interval"),
+                    "confirmation_message": args.get("confirmation_message"),
+                    "repeat_question": args.get("repeat_question"),
                 }
 
             if fc.name == "update_timezone":
@@ -182,6 +184,7 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                 return {
                     "type": "update_timezone",
                     "timezone": args.get("timezone", ""),
+                    "confirmation_message": args.get("confirmation_message"),
                 }
 
             if fc.name == "cancel_reminder":
@@ -189,6 +192,7 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                 return {
                     "type": "cancel_reminder",
                     "reminder_id": args.get("reminder_id", ""),
+                    "cancellation_message": args.get("cancellation_message"),
                 }
 
     return _extract_text(response)
