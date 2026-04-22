@@ -16,7 +16,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from gemini_client import (
     process_message, summarize_text, resolve_timezone, transcribe_audio,
     resolve_repeat_interval, handle_session_message, generate_timeout_message,
-    web_search_call,
+    generate_action_message, web_search_call,
 )
 from cost_tracker import get_monthly_summary, COST_LOGS_DIR
 from history_manager import append_message, read_history_since, read_recent_history, HISTORIES_DIR
@@ -150,13 +150,12 @@ async def _execute_session(session: DialogSession, user_text: str, interval: str
 
     if session.type == "reminder_repeat":
         if not interval:
-            return "No problem — keeping it as a one-time reminder."
+            return None     # Gemini's "cancel" reply is already natural — use that
         repeat_spec = None
         try:
             repeat_spec = await resolve_repeat_interval(interval)
         except Exception:
             pass
-        # Cancel the one-time jobs and re-schedule with repeat
         for job_id in session.data.get("scheduled_jobs", []):
             _cancel_reminder_job(job_id[:8], allowed_group_id=None)
         fire_at_naive = datetime.fromisoformat(session.data["iso_time"])
@@ -177,11 +176,9 @@ async def _execute_session(session: DialogSession, user_text: str, interval: str
                 repeat_interval=interval,
                 repeat_spec=repeat_spec,
             )
-        display_tz = get_user_timezone(setter_jid)
-        fire_str = _format_fire_time(jobs[0]["fire_at_utc"], display_tz)
-        return f"Done! I'll remind you about '{session.data['message']}' {interval}, starting {fire_str}."
+        return None     # Gemini's "proceed" reply is already natural — use that
 
-    return ""
+    return None
 
 
 async def _do_schedule_reminder(
@@ -327,9 +324,11 @@ async def webhook(msg: IncomingMessage):
                     session_manager.close(msg.group_id, msg.sender_jid)
 
             if action == "proceed":
-                execute_reply = await _execute_session(session, msg.text, result.get("interval"))
-                if execute_reply:
-                    reply = execute_reply
+                execute_result = await _execute_session(session, msg.text, result.get("interval"))
+                # web_search returns the actual search content — use it
+                # reminder_repeat returns None — keep Gemini's natural reply
+                if execute_result is not None:
+                    reply = execute_result
 
             if reply and _latest_seq.get(msg.group_id) == seq:
                 await _send(msg.group_id, reply)
@@ -344,10 +343,10 @@ async def webhook(msg: IncomingMessage):
                 task = asyncio.create_task(_session_timeout(msg.group_id, msg.sender_jid))
                 new_session.timeout_task = task
                 if _latest_seq.get(msg.group_id) == seq:
-                    execute_reply = await _execute_session(new_session, msg.text)
-                    if execute_reply:
-                        await _send(msg.group_id, execute_reply)
-                        await append_message(msg.group_id, "Bot", execute_reply, datetime.now(timezone.utc).isoformat())
+                    execute_result = await _execute_session(new_session, msg.text)
+                    if execute_result is not None:
+                        await _send(msg.group_id, execute_result)
+                        await append_message(msg.group_id, "Bot", execute_result, datetime.now(timezone.utc).isoformat())
                 return {"ok": True}
 
     # ── /usage command ────────────────────────────────────────────────────────
@@ -469,7 +468,9 @@ async def webhook(msg: IncomingMessage):
             )
             opened = await _open_session(session)
             if not opened:
-                question = "You've already got something pending — let me know when you're ready and I can search for this too."
+                question = await generate_action_message("session_already_open", {
+                    "action_description": f"search the web for: {reply.get('original_message', 'something')}"
+                })
             await _send(msg.group_id, question)
             await append_message(msg.group_id, "Bot", question, datetime.now(timezone.utc).isoformat())
             return {"ok": True}

@@ -264,6 +264,34 @@ async def handle_session_message(
     return {"action": "ignore", "reply": raw}
 
 
+async def generate_action_message(action: str, data: dict) -> str:
+    """Generate a natural language message for a completed bot action or edge case."""
+    prompts = {
+        "reminder_repeat_done": (
+            f"You just set a reminder to repeat {data.get('interval')} — "
+            f"the reminder is about: '{data.get('message')}', first fires {data.get('fire_str')}. "
+            f"Write a short, natural confirmation message in the same language as the reminder text."
+        ),
+        "reminder_no_repeat": (
+            f"The user declined to repeat a reminder about: '{data.get('message')}'. "
+            f"Write a short, natural message confirming it stays as a one-time reminder. "
+            f"Reply in the same language as the reminder text."
+        ),
+        "session_already_open": (
+            f"The user asked you to {data.get('action_description', 'do something')} but you already have an "
+            f"open request waiting for their response. Write a short friendly message asking them to "
+            f"finish the current request first, then you can handle the new one."
+        ),
+    }
+    prompt = prompts.get(action, f"Action completed: {action}. Context: {data}. Write a short natural confirmation.")
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+    )
+    return _extract_text(response).strip()
+
+
 async def generate_timeout_message(session_type: str, session_data: dict, user_name: str) -> str:
     descriptions = {
         "web_search": f"search the web for: {session_data.get('original_message', 'your request')}",
