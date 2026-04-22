@@ -150,7 +150,7 @@ async def _execute_session(session: DialogSession, user_text: str, interval: str
 
     if session.type == "reminder_repeat":
         if not interval:
-            return "Got it, keeping the reminder without repeat."
+            return "No problem — keeping it as a one-time reminder."
         repeat_spec = None
         try:
             repeat_spec = await resolve_repeat_interval(interval)
@@ -179,7 +179,7 @@ async def _execute_session(session: DialogSession, user_text: str, interval: str
             )
         display_tz = get_user_timezone(setter_jid)
         fire_str = _format_fire_time(jobs[0]["fire_at_utc"], display_tz)
-        return f"✅ Got it — repeating {interval}, starting {fire_str}"
+        return f"Done! I'll remind you about '{session.data['message']}' {interval}, starting {fire_str}."
 
     return ""
 
@@ -469,7 +469,7 @@ async def webhook(msg: IncomingMessage):
             )
             opened = await _open_session(session)
             if not opened:
-                question = "I need to search the web, but you already have a pending request. Finish that first."
+                question = "You've already got something pending — let me know when you're ready and I can search for this too."
             await _send(msg.group_id, question)
             await append_message(msg.group_id, "Bot", question, datetime.now(timezone.utc).isoformat())
             return {"ok": True}
@@ -491,13 +491,14 @@ async def webhook(msg: IncomingMessage):
 
             # If repeat was ambiguous, open a session to ask
             if reply.get("repeat_interval") == "ask" and scheduled:
+                repeat_q = reply.get("repeat_question") or f"Should '{reply['message']}' repeat? If so, how often? (e.g. daily, every Monday, weekly)"
                 session = DialogSession(
                     session_id=str(uuid.uuid4()),
                     group_id=msg.group_id,
                     user_jid=msg.sender_jid,
                     user_name=msg.sender,
                     type="reminder_repeat",
-                    question="Should this reminder repeat? If so, how often? (e.g. daily, every Monday, weekly)",
+                    question=repeat_q,
                     data={
                         "message": reply["message"],
                         "iso_time": reply["iso_time"],
@@ -517,9 +518,9 @@ async def webhook(msg: IncomingMessage):
             resolved = await resolve_timezone(raw_tz)
             if resolved and is_valid_tz(resolved):
                 set_user_timezone(msg.sender_jid, resolved)
-                confirm_text = f"✅ Your timezone is now {resolved}."
+                confirm_text = reply.get("confirmation_message") or f"Done! Your timezone is now set to {resolved}."
             else:
-                confirm_text = f"Sorry, I couldn't recognize '{raw_tz}' as a timezone. Try something like 'London', 'Tel Aviv', or 'New York'."
+                confirm_text = f"I couldn't recognise '{raw_tz}' as a timezone — try something like 'London', 'New York', or 'Asia/Jerusalem'."
             await _send(msg.group_id, confirm_text)
             await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
             return {"ok": True}
@@ -529,9 +530,9 @@ async def webhook(msg: IncomingMessage):
             rid = reply.get("reminder_id", "").lstrip("#")
             allowed = None if is_main_group(msg.group_id) else msg.group_id
             if rid and _cancel_reminder_job(rid, allowed_group_id=allowed):
-                confirm_text = f"✅ Reminder #{rid} cancelled."
+                confirm_text = reply.get("cancellation_message") or "Done, the reminder has been cancelled."
             else:
-                confirm_text = "I couldn't find that reminder. Use /reminders to see what's active."
+                confirm_text = "I couldn't find that reminder — use /reminders to see what's still active."
             await _send(msg.group_id, confirm_text)
             await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
             return {"ok": True}

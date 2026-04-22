@@ -74,6 +74,7 @@ _set_reminder_func = FunctionDeclaration(
             "iso_time": {"type": "STRING", "description": "Naive ISO 8601 local datetime, e.g. '2026-04-27T20:00:00'"},
             "repeat_interval": {"type": "STRING", "description": "Repeat interval: 'weekly', 'daily', 'every 30 minutes', 'monthly', 'yearly', etc. Omit if no repeat. Use 'ask' if repeat intent is possible but unclear."},
             "confirmation_message": {"type": "STRING", "description": "Natural language confirmation to send to the user, e.g. 'Done! I'll remind you to call mom tonight at 8pm.'"},
+            "repeat_question": {"type": "STRING", "description": "Only when repeat_interval='ask': a natural question asking how often to repeat, referencing what the reminder is about. e.g. 'Want me to remind you about this every week? Just say how often.'"},
         },
         "required": ["message", "iso_time", "confirmation_message"],
     },
@@ -89,8 +90,9 @@ _update_timezone_func = FunctionDeclaration(
         "type": "OBJECT",
         "properties": {
             "timezone": {"type": "STRING", "description": "User's timezone input, e.g. 'London', 'Tel Aviv', 'New York', 'Asia/Jerusalem'"},
+            "confirmation_message": {"type": "STRING", "description": "Natural language confirmation to send after updating, e.g. 'Done! I've set your timezone to London. Your reminders will now fire at the right time for you.'"},
         },
-        "required": ["timezone"],
+        "required": ["timezone", "confirmation_message"],
     },
 )
 
@@ -104,8 +106,9 @@ _cancel_reminder_func = FunctionDeclaration(
         "type": "OBJECT",
         "properties": {
             "reminder_id": {"type": "STRING", "description": "The short reminder ID (e.g. 'af4e6a90') from the pending reminders list"},
+            "cancellation_message": {"type": "STRING", "description": "Natural language confirmation, referencing what was cancelled, e.g. 'Done, I've cancelled the reminder to call mom.'"},
         },
-        "required": ["reminder_id"],
+        "required": ["reminder_id", "cancellation_message"],
     },
 )
 
