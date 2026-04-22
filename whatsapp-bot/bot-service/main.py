@@ -241,8 +241,6 @@ async def _do_schedule_reminder(
 
 @app.post("/bot-online")
 async def bot_online():
-    if MAIN_GROUP_ID:
-        await _send(MAIN_GROUP_ID, "🌍")
     return {"ok": True}
 
 
@@ -329,7 +327,7 @@ async def webhook(msg: IncomingMessage):
         # Active session — slash commands bypass it, everything else goes through
         if session and not msg.text.strip().startswith("/"):
             recent = read_recent_history(msg.group_id, hours=2)
-            await _react(msg.group_id, msg.message_key, "👍")
+            await _react(msg.group_id, msg.message_key, "🌍")
             await _start_typing(msg.group_id)
             try:
                 result = await handle_session_message(
@@ -468,7 +466,7 @@ async def webhook(msg: IncomingMessage):
             lines.append(f"#{j['id']} | {fire_str}{repeat} — {j['message']}")
         reminders_context = "\n".join(lines)
 
-    await _react(msg.group_id, msg.message_key, "👍")
+    await _react(msg.group_id, msg.message_key, "🌍")
     await _start_typing(msg.group_id)
     try:
         reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context)
