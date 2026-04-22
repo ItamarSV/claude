@@ -483,7 +483,9 @@ async def webhook(msg: IncomingMessage):
                 created_by_jid=msg.sender_jid,
                 repeat_interval=reply.get("repeat_interval"),
             )
-            confirm_text = reply.get("confirmation_message", f"✅ Reminder set — {reply['message']}")
+            display_tz = get_user_timezone(msg.sender_jid)
+            fire_str = _format_fire_time(scheduled[0]["fire_at_utc"], display_tz) if scheduled else reply["iso_time"]
+            confirm_text = reply.get("confirmation_message") or f"✅ Reminder set for {fire_str} — {reply['message']}"
             await _send(msg.group_id, confirm_text)
             await append_message(msg.group_id, "Bot", confirm_text, datetime.now(timezone.utc).isoformat())
 
