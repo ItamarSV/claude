@@ -4,22 +4,52 @@
 **Runtime:** Python 3.12, FastAPI + Uvicorn, runs in a `venv/`
 
 ## Webhook Flow (`main.py`)
-1. `POST /webhook` receives `{group_id, sender, sender_jid, text, timestamp, is_bot_mentioned, is_reply_to_bot, audio_data?, audio_mime?}` from whatsapp-service
-2. Assigns a per-group sequence number (policy 2 — last-message-only)
-3. **If `audio_data` present and no text:** calls `transcribe_audio()` → replaces `msg.text` with `[voice] <transcription>` before any further processing
-4. `append_message()` writes the user message (or transcription) to the group's history file immediately
-5. Checks group policy (see Policy System below) — may skip processing
-6. `_awaiting_reply` check: mention-only groups bypass the mention filter for one message (used for reminder confirmations, web search responses)
-7. Checks reminder session (`_pending_reminder`) — handles yes/no confirmation and repeat flow
-8. Checks slash commands (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini
-9. Fetches pending reminders for group → formats as context string for Gemini
-10. `process_message()` calls Gemini and gets a reply
-11. Checks sequence number again — skips reply if a newer message arrived (policy 2)
-12. Handles special Gemini reply types: `set_reminder`, `update_timezone`, `cancel_reminder`, web search dict
-13. Reply is POSTed to whatsapp-service `POST /send`
-14. Bot reply is also saved to history via `append_message()` (sender = "Bot")
+1. `POST /webhook` receives `{group_id, sender, sender_jid, text, timestamp, is_bot_mentioned, is_reply_to_bot, audio_data?, audio_mime?}`
+2. Assigns a per-group sequence number (last-message-only policy)
+3. **If `audio_data` present and no text:** `transcribe_audio()` → `msg.text = "[voice] <transcription>"`
+4. `append_message()` writes to history immediately
+5. **Policy checks** — skip listener groups; mention-only filter (session owners bypass it)
+6. **Session routing** (see Dialog Session Manager below) — runs before slash commands
+7. **Slash commands** (`/usage`, `/summarize`, `/reminders`) — handled directly, skip Gemini
+8. Fetches pending reminders → formats as context string for Gemini
+9. `process_message()` calls Gemini
+10. Checks sequence number — skips if newer message arrived
+11. Handles structured Gemini results: `web_search` → open session; `set_reminder` → schedule directly; `update_timezone` → save; `cancel_reminder` → direct cancel
+12. Reply POSTed to `/send`, saved to history
 
 History is always saved regardless of whether the bot can respond (Gemini errors don't lose history).
+
+## Dialog Session Manager (`session_manager.py`)
+
+Sessions are background tasks the bot holds open until the user provides a required piece of information (approval, repeat interval, etc.).
+
+**Key rules:**
+- Session key is `(group_id, user_jid)` — strict group isolation, per-user within a group
+- Multiple users in the same group can have independent sessions simultaneously
+- One active session per user at a time — if user triggers a second, bot says finish the first
+- Session owners bypass mention-only filter for their replies
+- Slash commands always bypass session routing
+- Per-(group, user) `asyncio.Lock` prevents race conditions on concurrent messages
+
+**Session types:**
+| Type | Opened when | Waits for | On proceed |
+|---|---|---|---|
+| `web_search` | Gemini calls `request_web_search` | User approves internet search | `web_search_call()` |
+| `reminder_repeat` | `set_reminder` returns `repeat_interval="ask"` | User specifies repeat interval | Re-schedule with CronTrigger/IntervalTrigger |
+
+**Lifecycle:**
+1. **Open** — `_open_session()` stores session, starts 5-min `asyncio` timeout task
+2. **Message from session owner** → single `handle_session_message()` Gemini call:
+   - `proceed` → `_execute_session()`, close session
+   - `cancel` → close session, send farewell
+   - `ignore` → answer their question normally, session stays open silently (no re-asking)
+3. **Message from other user** → processed normally, zero session interference
+4. **Timeout (5 min)** → `generate_timeout_message()` sends natural @mention closure, session moved to ghost
+
+**Ghost sessions (2-min window after timeout):**
+If the original user sends an approval within 2 minutes of the timeout message, the session is revived automatically and the action executes immediately. After 2 minutes the ghost expires — user must trigger the action again explicitly.
+
+**`DialogSession` fields:** `session_id`, `group_id`, `user_jid`, `user_name`, `type`, `question`, `data` (type-specific payload), `created_at`, `timeout_task`
 
 ## Policy System (`policy_manager.py`)
 
@@ -71,51 +101,48 @@ Current model: `gemini-2.5-flash` (free tier available).
 ## Gemini Tool Use Pattern (`gemini_client.py`)
 Five function declarations registered: `get_group_history`, `request_web_search`, `set_reminder`, `update_timezone`, `cancel_reminder`.
 
-**Three-phase call pattern:**
-1. **First call:** send the user's message with all function declarations available
-2. Check response parts for a `function_call`:
-   - `get_group_history` → load history file → second call with history injected as plain text (no tools)
-   - `request_web_search` → store original message in `_pending_web_search[group_id]`, return a dict with buttons asking the user to confirm
+**Call pattern:**
+1. **First call:** send user message with all function declarations
+2. Check response for a `function_call`:
+   - `get_group_history` → load history → second call with history injected (no tools)
+   - `request_web_search` → returns `{"type": "web_search", "question": "...", "original_message": "..."}` — `main.py` opens a dialog session
+   - `set_reminder` → returns `{"type": "set_reminder", "message", "iso_time", "repeat_interval", "confirmation_message"}` — `main.py` schedules directly and sends `confirmation_message`
+   - `update_timezone` → returns `{"type": "update_timezone", "timezone"}` — resolved and saved
+   - `cancel_reminder` → returns `{"type": "cancel_reminder", "reminder_id"}` — direct cancel, no session
 3. **If no tool call:** use the first response directly
 
-**Web search confirmation flow:**
-- `process_message()` returns `{"text": "...", "buttons": [{"id": "web_search_yes", "text": "🔍 Yes, search"}, {"id": "web_search_no", "text": "❌ No thanks"}]}`
-- `main.py` merges this dict into the `/send` payload → whatsapp-service renders as plain-text numbered list (native buttons are silently dropped by WhatsApp servers)
-- User replies with the button ID text (`web_search_yes` / `web_search_no`) or a button tap if somehow received
-- `process_message()` checks `_pending_web_search` and routes: `web_search_yes` → triggers `_web_search_call()`, `web_search_no` → dismisses
+**`request_web_search`** includes a `question` field — Gemini writes a contextual approval question (e.g. *"The Champions League final was yesterday — want me to look up the result?"*). No hardcoded text, no buttons.
 
-**`_web_search_call()`:** separate Gemini call using only `GoogleSearch` built-in tool (no function declarations — they conflict).
+**`set_reminder`** includes `confirmation_message` — Gemini writes the natural confirmation (e.g. *"Done! I'll remind you to call mom tonight at 8pm."*). Reminder is set directly without a confirmation session. A `reminder_repeat` session is only opened when `repeat_interval="ask"`.
 
-**`_pending_web_search`:** per-group dict `{group_id: original_user_message}` — cleared on any confirmation response or unrelated message.
+**`web_search_call(group_id, user_message) -> str`:** separate Gemini call using only `GoogleSearch` built-in tool (no function declarations — they conflict). Called by `_execute_session` when web_search session proceeds.
 
-**`set_reminder`** → returns `{"type": "set_reminder", "message", "iso_time", "repeat_interval"}` — handled in `main.py` session flow.
+**Local time context** is injected into every `process_message` call: `[Today is Monday 2026-04-21, current local time is 17:32 (Asia/Jerusalem)]`.
 
-**`update_timezone`** → returns `{"type": "update_timezone", "timezone"}` — resolved via `resolve_timezone()` Gemini call, saved to `user_timezones.json` by JID.
-
-**`cancel_reminder`** → returns `{"type": "cancel_reminder", "reminder_id"}` — Gemini picks the right ID from the pending reminders context injected into every message. `main.py` calls `_cancel_reminder_job(rid, allowed_group_id=allowed)` where `allowed` is `None` for Main group (can cancel any) or the current `group_id` (can only cancel own).
-
-**Local time context** is injected into every `process_message` call: `[Today is Monday 2026-04-21, current local time is 17:32 (Asia/Jerusalem)]` using the sender's timezone from `user_timezones.json`. This ensures Gemini resolves relative times ("in 5 minutes", "tonight") correctly in the user's local time, not UTC. The returned `iso_time` is then treated as naive local time in the setter's timezone.
-
-**Pending reminders context** is injected into every `process_message` call as a formatted list of active reminders for that group (id, fire time, message). This gives Gemini the information it needs to cancel the right reminder by description.
-
-Gemini decides autonomously whether history, search, or a tool action is needed.
+**Pending reminders context** is injected into every `process_message` call so Gemini can cancel the right reminder by description.
 
 ## Gemini Utility Functions (`gemini_client.py`)
 
+**`handle_session_message(session_type, session_question, session_data, user_text, recent_history) -> dict`**
+Single Gemini call for active dialog sessions. Returns `{"action": "proceed"|"cancel"|"ignore", "reply": str, "interval"?: str}`.
+- `proceed` — user approved; for `reminder_repeat`, also returns `interval`
+- `cancel` — user declined or wants to move on
+- `ignore` — unrelated message; `reply` is the normal answer to their question; session stays open silently
+
+**`generate_timeout_message(session_type, session_data, user_name) -> str`**
+Generates a natural @mention timeout message, e.g. *"@David I didn't get your approval, so I won't search the NBA results."*
+
 **`transcribe_audio(group_id, audio_data_b64, audio_mime) -> str`**
-Sends the audio as inline bytes to Gemini (`genai_types.Part(inline_data=genai_types.Blob(...))`). Returns the spoken words. Cost is tracked. Called from `main.py` before `append_message` so history and Gemini always see the transcribed text, not raw audio.
+Sends audio as inline bytes to Gemini. Returns spoken words. Cost tracked.
 
 **`resolve_repeat_interval(text) -> dict | None`**
-Asks Gemini to convert a natural language repeat schedule to an APScheduler trigger dict. Returns:
-- `{"type": "cron", "day_of_week": "mon,sun"}` for day-of-week patterns
-- `{"type": "interval", "weeks": 1}` for fixed intervals
-Returns `None` if parsing fails. Used in `_schedule_reminder_jobs` and the `awaiting_repeat` handler.
+Converts natural language repeat schedule to APScheduler trigger dict.
 
 **`resolve_timezone(text) -> str`**
-Converts city/region name to IANA timezone (e.g. "London" → "Europe/London").
+Converts city/region name to IANA timezone.
 
 **`summarize_text(group_id, prompt) -> str`**
-Generic Gemini call for `/summarize` command output.
+Generic Gemini call for `/summarize` output.
 
 ## History Files (`history_manager.py`)
 - Stored in `group_histories/{sanitized_group_id}.txt`
@@ -162,10 +189,10 @@ Each call appends one line to `cost_logs/YYYY-MM.txt`:
 - **Main group**: can list all reminders across all groups, cancel any reminder (`allowed_group_id=None`)
 - **Other groups**: can only list their own reminders, can only cancel their own reminders (`allowed_group_id=group_id`)
 
-**Reminder session state** in `main.py` (`_pending_reminder[group_id]`):
-- `awaiting_confirm` — bot asked "set reminder?", waiting for yes/no
-- `awaiting_repeat` — reminder confirmed, bot asked about repeat, waiting for response
-- `_awaiting_reply` is set so mention-only groups don't block the yes/no reply
+**Reminder flow (no confirmation session):**
+- When Gemini calls `set_reminder` with a valid `iso_time`, the reminder is scheduled immediately. `confirmation_message` from Gemini is sent as the reply.
+- If `repeat_interval="ask"`, a one-time job is scheduled and a `reminder_repeat` dialog session opens asking how often.
+- No `_pending_reminder` or `_awaiting_reply` state — replaced by the session manager.
 
 ## Timezones (`timezone_manager.py`)
 - Stored in `user_timezones.json` keyed by participant **JID** (stable, unlike display names)
