@@ -73,7 +73,7 @@ _set_reminder_func = FunctionDeclaration(
             "message": {"type": "STRING", "description": "What to remind about"},
             "iso_time": {"type": "STRING", "description": "Naive ISO 8601 local datetime, e.g. '2026-04-27T20:00:00'"},
             "repeat_interval": {"type": "STRING", "description": "Repeat interval: 'weekly', 'daily', 'every 30 minutes', 'monthly', 'yearly', etc. Omit if no repeat. Use 'ask' if repeat intent is possible but unclear."},
-            "confirmation_message": {"type": "STRING", "description": "Natural language confirmation to send to the user, e.g. 'Done! I'll remind you to call mom tonight at 8pm.'"},
+            "confirmation_message": {"type": "STRING", "description": "Natural, conversational confirmation in the SAME LANGUAGE as the user's message. Write as a real person would in WhatsApp chat — NOT as a structured template. Do NOT use '✅ Reminder set for...' format. Examples: 'Done! I'll remind you to call mom tonight at 8.' / 'בסדר, אזכיר לך מחר בבוקר ב-7 לדווח.'"},
             "repeat_question": {"type": "STRING", "description": "Only when repeat_interval='ask': a natural question asking how often to repeat, referencing what the reminder is about. e.g. 'Want me to remind you about this every week? Just say how often.'"},
         },
         "required": ["message", "iso_time", "confirmation_message"],
