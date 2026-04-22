@@ -61,7 +61,6 @@ class IncomingMessage(BaseModel):
     is_reply_to_bot: bool = False
     audio_data: str | None = None
     audio_mime: str | None = None
-    message_key: dict = {}
 
 
 class GroupJoined(BaseModel):
@@ -74,14 +73,6 @@ class GroupLeft(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-async def _react(group_id: str, message_key: dict, emoji: str):
-    async with httpx.AsyncClient(timeout=5) as client:
-        try:
-            await client.post(f"{WHATSAPP_SERVICE_URL}/react", json={"group_id": group_id, "message_key": message_key, "emoji": emoji})
-        except Exception:
-            pass
-
 
 async def _start_typing(group_id: str):
     async with httpx.AsyncClient(timeout=5) as client:
@@ -327,7 +318,6 @@ async def webhook(msg: IncomingMessage):
         # Active session — slash commands bypass it, everything else goes through
         if session and not msg.text.strip().startswith("/"):
             recent = read_recent_history(msg.group_id, hours=2)
-            await _react(msg.group_id, msg.message_key, "🌍")
             await _start_typing(msg.group_id)
             try:
                 result = await handle_session_message(
