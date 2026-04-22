@@ -23,7 +23,7 @@ You also have a tool to set a reminder when a user explicitly asks you to remind
 You also have a tool to cancel a reminder when a user asks to delete or remove one — use the pending reminders list provided in the context to identify the correct reminder ID.
 You also have a tool to update a user's timezone when they ask to change it.
 Keep responses concise and conversational — this is a chat, not a document.
-Always reply in the same language as the message you received."""
+IMPORTANT: Always reply in the same language the user wrote in. If the message is in Hebrew, reply in Hebrew. If in English, reply in English. Never switch languages unless the user does."""
 
 _history_func = FunctionDeclaration(
     name="get_group_history",
@@ -52,7 +52,7 @@ _web_search_func = FunctionDeclaration(
         "type": "OBJECT",
         "properties": {
             "reason": {"type": "STRING", "description": "Why internet access is needed"},
-            "question": {"type": "STRING", "description": "Natural language question to ask the user for approval, tailored to their request. E.g. 'The Champions League final was yesterday — want me to look up the result?'"},
+            "question": {"type": "STRING", "description": "Natural language question asking the user for approval, in the SAME LANGUAGE as the user's message. E.g. if user wrote Hebrew, ask in Hebrew. Tailor it to their request."},
         },
         "required": ["reason", "question"],
     },
@@ -74,7 +74,7 @@ _set_reminder_func = FunctionDeclaration(
             "iso_time": {"type": "STRING", "description": "Naive ISO 8601 local datetime, e.g. '2026-04-27T20:00:00'"},
             "repeat_interval": {"type": "STRING", "description": "Repeat interval: 'weekly', 'daily', 'every 30 minutes', 'monthly', 'yearly', etc. Omit if no repeat. Use 'ask' if repeat intent is possible but unclear."},
             "confirmation_message": {"type": "STRING", "description": "Natural, conversational confirmation in the SAME LANGUAGE as the user's message. Write as a real person would in WhatsApp chat — NOT as a structured template. Do NOT use '✅ Reminder set for...' format. Examples: 'Done! I'll remind you to call mom tonight at 8.' / 'בסדר, אזכיר לך מחר בבוקר ב-7 לדווח.'"},
-            "repeat_question": {"type": "STRING", "description": "Only when repeat_interval='ask': a natural question asking how often to repeat, referencing what the reminder is about. e.g. 'Want me to remind you about this every week? Just say how often.'"},
+            "repeat_question": {"type": "STRING", "description": "Only when repeat_interval='ask': a natural question asking how often to repeat, in the SAME LANGUAGE as the user's message, referencing what the reminder is about."},
         },
         "required": ["message", "iso_time", "confirmation_message"],
     },
@@ -90,7 +90,7 @@ _update_timezone_func = FunctionDeclaration(
         "type": "OBJECT",
         "properties": {
             "timezone": {"type": "STRING", "description": "User's timezone input, e.g. 'London', 'Tel Aviv', 'New York', 'Asia/Jerusalem'"},
-            "confirmation_message": {"type": "STRING", "description": "Natural language confirmation to send after updating, e.g. 'Done! I've set your timezone to London. Your reminders will now fire at the right time for you.'"},
+            "confirmation_message": {"type": "STRING", "description": "Natural language confirmation to send after updating, in the SAME LANGUAGE as the user's message."},
         },
         "required": ["timezone", "confirmation_message"],
     },
@@ -106,7 +106,7 @@ _cancel_reminder_func = FunctionDeclaration(
         "type": "OBJECT",
         "properties": {
             "reminder_id": {"type": "STRING", "description": "The short reminder ID (e.g. 'af4e6a90') from the pending reminders list"},
-            "cancellation_message": {"type": "STRING", "description": "Natural language confirmation, referencing what was cancelled, e.g. 'Done, I've cancelled the reminder to call mom.'"},
+            "cancellation_message": {"type": "STRING", "description": "Natural language confirmation referencing what was cancelled, in the SAME LANGUAGE as the user's message."},
         },
         "required": ["reminder_id", "cancellation_message"],
     },
@@ -322,8 +322,10 @@ async def generate_timeout_message(session_type: str, session_data: dict, user_n
         contents=(
             f"Write a short, friendly WhatsApp message to @{user_name} saying you didn't get "
             f"their response in time, so you won't {desc}. "
-            f"Start with @{user_name}. One sentence. No quotes around the output."
+            f"Start with @{user_name}. One sentence. No quotes around the output. "
+            f"Write in the same language the context is in (Hebrew if the content is Hebrew, English if English)."
         ),
+        config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
     )
     return _extract_text(response).strip()
 
