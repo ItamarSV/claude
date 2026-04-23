@@ -28,9 +28,10 @@ IMPORTANT: Always reply in the same language the user wrote in. If the message i
 _history_func = FunctionDeclaration(
     name="get_group_history",
     description=(
-        "Retrieve the full chat history of this group (beyond the last 2 hours). "
-        "Call this when the question references something older — past decisions, "
-        "lists, or events that happened more than 2 hours ago."
+        "Retrieve this group's full WhatsApp chat history stored locally. "
+        "Call this whenever the user references something said in this group — "
+        "past messages, decisions, lists, wishes, conversations, or anything a member wrote here, "
+        "even if it was recent. This is local chat data, not the internet."
     ),
     parameters={
         "type": "OBJECT",

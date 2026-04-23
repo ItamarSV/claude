@@ -352,9 +352,11 @@ async def webhook(msg: IncomingMessage):
 
             if action == "proceed":
                 execute_result = await _execute_session(session, msg.text, result.get("interval"))
-                # web_search returns the actual search content — use it
-                # reminder_repeat returns None — keep Gemini's natural reply
-                if execute_result is not None:
+                if session.type == "web_search":
+                    # Typing indicator already signals processing — skip proceed message, send result only
+                    reply = execute_result or ""
+                elif execute_result is not None:
+                    # reminder_repeat returns None — keep Gemini's natural reply
                     reply = execute_result
 
             if reply and _latest_seq.get(msg.group_id) == seq:
