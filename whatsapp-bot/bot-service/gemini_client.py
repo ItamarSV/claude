@@ -10,6 +10,7 @@ from google.genai.types import (
 )
 from history_manager import read_history, read_recent_history
 from cost_tracker import record_call
+from policy_manager import is_main_group, get_all_active_groups
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
@@ -30,10 +31,11 @@ IMPORTANT: When you decide to call a tool, the tool call must be your ENTIRE res
 _history_func = FunctionDeclaration(
     name="get_group_history",
     description=(
-        "Retrieve this group's full WhatsApp chat history stored locally. "
-        "Call this whenever the user references something said in this group — "
-        "past messages, decisions, lists, wishes, conversations, or anything a member wrote here, "
-        "even if it was recent. This is local chat data, not the internet."
+        "Retrieve the full WhatsApp chat history stored locally. "
+        "Call this whenever the user references something said in any group — "
+        "past messages, decisions, lists, wishes, conversations, writing style, or anything a member wrote, "
+        "even if it was recent. This is local chat data, not the internet. "
+        "In the Main admin group this returns histories from ALL groups combined."
     ),
     parameters={
         "type": "OBJECT",
@@ -172,12 +174,24 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
         fc = getattr(part, "function_call", None)
         if fc:
             if fc.name == "get_group_history":
-                history = read_history(group_id)
-                history_context = (
-                    f"Here is the full chat history for this group:\n\n{history}\n\n"
-                    if history
-                    else "No chat history available yet for this group.\n\n"
-                )
+                if is_main_group(group_id):
+                    parts = []
+                    for gid, name in get_all_active_groups():
+                        h = read_history(gid)
+                        if h:
+                            parts.append(f"=== {name} ===\n{h}")
+                    history_context = (
+                        f"Here are the full chat histories for all groups:\n\n" + "\n\n".join(parts) + "\n\n"
+                        if parts
+                        else "No chat history available yet for any group.\n\n"
+                    )
+                else:
+                    history = read_history(group_id)
+                    history_context = (
+                        f"Here is the full chat history for this group:\n\n{history}\n\n"
+                        if history
+                        else "No chat history available yet for this group.\n\n"
+                    )
                 followup = client.models.generate_content(
                     model=MODEL,
                     contents=f"{history_context}Now answer this message:\n{contents}",
