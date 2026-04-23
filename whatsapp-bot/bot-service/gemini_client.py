@@ -194,7 +194,7 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
                     )
                 followup = client.models.generate_content(
                     model=MODEL,
-                    contents=f"{history_context}Now answer this message:\n{contents}",
+                    contents=f"{history_context}Answer the following message directly using the history above. Do not say you are going to read or search through it — just use it and respond now:\n{contents}",
                     config=GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
                 )
                 _track_cost(group_id, followup)
