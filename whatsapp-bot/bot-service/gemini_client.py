@@ -23,7 +23,8 @@ You also have a tool to set a reminder when a user explicitly asks you to remind
 You also have a tool to cancel a reminder when a user asks to delete or remove one — use the pending reminders list provided in the context to identify the correct reminder ID.
 You also have a tool to update a user's timezone when they ask to change it.
 Keep responses concise and conversational — this is a chat, not a document.
-IMPORTANT: Always reply in the same language the user wrote in. If the message is in Hebrew, reply in Hebrew. If in English, reply in English. Never switch languages unless the user does."""
+IMPORTANT: Always reply in the same language the user wrote in. If the message is in Hebrew, reply in Hebrew. If in English, reply in English. Never switch languages unless the user does.
+IMPORTANT: Never announce that you are about to call a tool. Never say "just a moment", "let me search", "I'll look that up", or anything similar. Call the tool immediately and respond with the result."""
 
 _history_func = FunctionDeclaration(
     name="get_group_history",
