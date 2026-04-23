@@ -24,7 +24,8 @@ You also have a tool to cancel a reminder when a user asks to delete or remove o
 You also have a tool to update a user's timezone when they ask to change it.
 Keep responses concise and conversational — this is a chat, not a document.
 IMPORTANT: Always reply in the same language the user wrote in. If the message is in Hebrew, reply in Hebrew. If in English, reply in English. Never switch languages unless the user does.
-IMPORTANT: Never announce that you are about to call a tool. Never say "just a moment", "let me search", "I'll look that up", or anything similar. Call the tool immediately and respond with the result."""
+IMPORTANT: Never announce that you are about to call a tool. Never say "just a moment", "let me search", "I'll look that up", or anything similar. Call the tool immediately and respond with the result.
+IMPORTANT: When you decide to call a tool, the tool call must be your ENTIRE response — no preamble text, no "I'll look this up", no filler. Generate either a tool call OR a text reply, never both."""
 
 _history_func = FunctionDeclaration(
     name="get_group_history",
@@ -157,6 +158,15 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
         config=_base_config,
     )
     _track_cost(group_id, response)
+
+    parts_summary = []
+    for p in response.candidates[0].content.parts:
+        fc = getattr(p, "function_call", None)
+        if fc:
+            parts_summary.append(f"function_call:{fc.name}({dict(fc.args) if fc.args else {}})")
+        elif getattr(p, "text", None):
+            parts_summary.append(f"text:{p.text[:80]!r}")
+    print(f"[gemini] group={group_id} parts={parts_summary}", flush=True)
 
     for part in response.candidates[0].content.parts:
         fc = getattr(part, "function_call", None)

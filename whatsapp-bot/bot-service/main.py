@@ -92,7 +92,7 @@ async def _send(group_id: str, text: str, mention_jids: list | None = None) -> d
             r.raise_for_status()
             return r.json().get("message_key") or {}
         except Exception as e:
-            print(f"Failed to send message: {e}")
+            print(f"Failed to send message: {e}", flush=True)
             return {}
 
 
@@ -284,7 +284,7 @@ async def webhook(msg: IncomingMessage):
             )
             msg = msg.model_copy(update={"text": f"[voice] {transcription}"})
         except Exception as e:
-            print(f"Audio transcription failed: {e}")
+            print(f"Audio transcription failed: {e}", flush=True)
             msg = msg.model_copy(update={"text": "[voice message]"})
 
     await append_message(msg.group_id, msg.sender, msg.text, msg.timestamp)
@@ -336,7 +336,7 @@ async def webhook(msg: IncomingMessage):
                     session.type, session.question, session.data, msg.text, recent
                 )
             except Exception as e:
-                print(f"Session handler error: {e}")
+                print(f"Session handler error: {e}", flush=True)
                 result = {"action": "ignore", "reply": "Sorry, something went wrong."}
 
             action = result.get("action", "ignore")
@@ -476,7 +476,7 @@ async def webhook(msg: IncomingMessage):
     try:
         reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context)
     except Exception as e:
-        print(f"Gemini error: {e}")
+        print(f"Gemini error: {e}", flush=True)
         raise HTTPException(status_code=500, detail=str(e))
 
     if _latest_seq.get(msg.group_id) != seq:
@@ -517,7 +517,7 @@ async def webhook(msg: IncomingMessage):
 
         # ── Set reminder → schedule directly ─────────────────────────────────
         if rtype == "set_reminder":
-            print(f"[set_reminder] confirmation_message={reply.get('confirmation_message')!r} repeat_question={reply.get('repeat_question')!r}")
+            print(f"[set_reminder] confirmation_message={reply.get('confirmation_message')!r} repeat_question={reply.get('repeat_question')!r}", flush=True)
             scheduled = await _do_schedule_reminder(
                 group_id=msg.group_id,
                 message=reply["message"],
