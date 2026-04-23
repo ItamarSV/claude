@@ -35,10 +35,7 @@ _history_func = FunctionDeclaration(
     ),
     parameters={
         "type": "OBJECT",
-        "properties": {
-            "group_id": {"type": "STRING", "description": "The WhatsApp group ID"}
-        },
-        "required": ["group_id"],
+        "properties": {},
     },
 )
 
