@@ -571,7 +571,16 @@ async def webhook(msg: IncomingMessage):
         if rtype == "cancel_reminder":
             rid = reply.get("reminder_id", "").lstrip("#")
             allowed = None if is_main_group(msg.group_id) else msg.group_id
-            if rid and _cancel_reminder_job(rid, allowed_group_id=allowed):
+            cancelled = bool(rid and _cancel_reminder_job(rid, allowed_group_id=allowed))
+            if not cancelled:
+                # Fall back to matching by reminder message text
+                rid_lower = rid.lower()
+                for j in list_reminders(allowed):
+                    if rid_lower and rid_lower in (j.get("message") or "").lower():
+                        cancelled = _cancel_reminder_job(j["id"], allowed_group_id=allowed)
+                        if cancelled:
+                            break
+            if cancelled:
                 confirm_text = reply.get("cancellation_message") or "Done, the reminder has been cancelled."
             else:
                 confirm_text = "I couldn't find that reminder — use /reminders to see what's still active."
