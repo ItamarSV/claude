@@ -25,6 +25,7 @@ from policy_manager import (
     activate, is_mention_only, is_listener, reset_to_new,
     get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
+    set_participants, get_participants,
 )
 from reminders import scheduler, add_reminder, list_reminders, cancel_reminder as _cancel_reminder_job
 from session_manager import session_manager, DialogSession, SESSION_TIMEOUT
@@ -263,6 +264,9 @@ async def group_joined(body: GroupJoined):
     if get_status(body.group_id) != "new":
         return {"ok": True}
     set_pending(body.group_id, body.group_name)
+    participants = await _fetch_participants(body.group_id)
+    if participants:
+        set_participants(body.group_id, participants)
     await _send(MAIN_GROUP_ID, new_group_message(body.group_name))
     return {"ok": True}
 
@@ -397,6 +401,23 @@ async def webhook(msg: IncomingMessage):
         await _send(msg.group_id, "\n".join(lines))
         return {"ok": True}
 
+    # ── /refresh-participants command ─────────────────────────────────────────
+    if is_main_group(msg.group_id) and msg.text.strip().lower().startswith("/refresh-participants"):
+        groups = get_all_active_groups()
+        if not groups:
+            await _send(msg.group_id, "No active groups found.")
+            return {"ok": True}
+        results = []
+        for gid, name in groups:
+            fetched = await _fetch_participants(gid)
+            if fetched:
+                set_participants(gid, fetched)
+                results.append(f"• {name}: {len(fetched)} members")
+            else:
+                results.append(f"• {name}: failed to fetch")
+        await _send(msg.group_id, "✅ Participants refreshed:\n" + "\n".join(results))
+        return {"ok": True}
+
     # ── /summarize command ────────────────────────────────────────────────────
     if msg.text.strip().lower().startswith("/summarize"):
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
@@ -472,9 +493,10 @@ async def webhook(msg: IncomingMessage):
             lines.append(f"#{j['id']} | {fire_str}{repeat} — {j['message']}")
         reminders_context = "\n".join(lines)
 
+    participants = get_participants(msg.group_id)
     await _start_typing(msg.group_id)
     try:
-        reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context)
+        reply = await process_message(msg.group_id, msg.sender, msg.text, msg.sender_jid, reminders_context, participants)
     except Exception as e:
         print(f"Gemini error: {e}", flush=True)
         raise HTTPException(status_code=500, detail=str(e))

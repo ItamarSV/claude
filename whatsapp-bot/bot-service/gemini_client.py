@@ -136,7 +136,7 @@ _base_config = GenerateContentConfig(
     tools=[Tool(function_declarations=[_history_func, _direct_web_search_func, _web_search_func, _set_reminder_func, _update_timezone_func, _cancel_reminder_func])],
 )
 
-async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "", reminders_context: str = "") -> str:
+async def process_message(group_id: str, sender: str, text: str, sender_jid: str = "", reminders_context: str = "", participants: list[dict] | None = None) -> str:
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
     from timezone_manager import get_user_timezone
@@ -147,8 +147,11 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
 
     recent = read_recent_history(group_id, hours=2)
     extra = ""
+    if participants:
+        names = ", ".join(p["name"] for p in participants)
+        extra += f"\nGroup members: {names}"
     if reminders_context:
-        extra = f"\nPending reminders in this group:\n{reminders_context}"
+        extra += f"\nPending reminders in this group:\n{reminders_context}"
     contents = (
         f"{time_context}{extra}\nRecent conversation (last 2 hours):\n{recent}\n\nNew message:\n{user_message}"
         if recent else f"{time_context}{extra}\n{user_message}"

@@ -20,9 +20,13 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - WHATSAPP_SERVICE_URL=http://whatsapp-service:3000
+      - MAIN_GROUP_ID=${MAIN_GROUP_ID}
     volumes:
       - ./bot-service/group_histories:/app/group_histories
       - ./bot-service/cost_logs:/app/cost_logs
+      - ./bot-service/group_policies.json:/app/group_policies.json
+      - ./bot-service/user_timezones.json:/app/user_timezones.json
+      - ./bot-service/reminders.db:/app/reminders.db
     networks:
       - bot-network
     depends_on:

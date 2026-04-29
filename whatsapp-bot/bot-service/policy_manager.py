@@ -74,6 +74,17 @@ def get_all_active_groups() -> list[tuple[str, str]]:
     ]
 
 
+def set_participants(group_id: str, participants: list[dict]):
+    data = _load()
+    if group_id in data:
+        data[group_id]["participants"] = participants
+        _save(data)
+
+
+def get_participants(group_id: str) -> list[dict]:
+    return _load().get(group_id, {}).get("participants", [])
+
+
 def reset_to_new(group_id: str):
     """Called when bot is removed from a group — resets so policy is re-asked on rejoin."""
     data = _load()
