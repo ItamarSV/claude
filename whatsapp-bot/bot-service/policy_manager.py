@@ -74,6 +74,20 @@ def get_all_active_groups() -> list[tuple[str, str]]:
     ]
 
 
+def update_participant_name(group_id: str, jid: str, name: str):
+    if not jid or not name:
+        return
+    data = _load()
+    participants = data.get(group_id, {}).get("participants", [])
+    for p in participants:
+        if p["jid"] == jid:
+            if p["name"] != name:
+                p["name"] = name
+                data[group_id]["participants"] = participants
+                _save(data)
+            return
+
+
 def set_participants(group_id: str, participants: list[dict]):
     data = _load()
     if group_id in data:

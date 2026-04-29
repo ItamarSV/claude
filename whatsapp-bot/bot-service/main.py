@@ -25,7 +25,7 @@ from policy_manager import (
     activate, is_mention_only, is_listener, reset_to_new,
     get_group_name, set_group_name, get_all_active_groups,
     new_group_message, MAIN_GROUP_ID,
-    set_participants, get_participants,
+    set_participants, get_participants, update_participant_name,
 )
 from reminders import scheduler, add_reminder, list_reminders, cancel_reminder as _cancel_reminder_job
 from session_manager import session_manager, DialogSession, SESSION_TIMEOUT
@@ -292,6 +292,7 @@ async def webhook(msg: IncomingMessage):
             msg = msg.model_copy(update={"text": "[voice message]"})
 
     await append_message(msg.group_id, msg.sender, msg.text, msg.timestamp)
+    update_participant_name(msg.group_id, msg.sender_jid, msg.sender)
 
     # ── Policy checks ─────────────────────────────────────────────────────────
     if is_main_group(msg.group_id):
