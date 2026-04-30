@@ -214,6 +214,13 @@ async function connectToWhatsApp() {
         }
       }
 
+      // Cache sender name for /refresh-participants
+      const participantJid = msg.key.participant;
+      if (participantJid && msg.pushName && contactNames[participantJid] !== msg.pushName) {
+        contactNames[participantJid] = msg.pushName;
+        saveContactNames();
+      }
+
       if (!text && !audioData) continue;
 
       // contextInfo can live under any message type
@@ -350,10 +357,18 @@ app.get('/group-participants', async (req, res) => {
   if (!sock) return res.status(503).json({ error: 'WhatsApp not connected' });
   try {
     const meta = await sock.groupMetadata(group_id);
+    let metaChanged = false;
     const participants = meta.participants.map(p => ({
       jid: p.id,
       name: p.notify || contactNames[p.id] || p.id.split('@')[0],
     }));
+    for (const p of meta.participants) {
+      if (p.notify && contactNames[p.id] !== p.notify) {
+        contactNames[p.id] = p.notify;
+        metaChanged = true;
+      }
+    }
+    if (metaChanged) saveContactNames();
     res.json({ participants });
   } catch (err) {
     res.status(500).json({ error: err.message });
