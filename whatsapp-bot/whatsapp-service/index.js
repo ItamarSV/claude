@@ -11,8 +11,17 @@ const axios = require('axios');
 const QRCode = require('qrcode');
 const pino = require('pino');
 const path = require('path');
+const fs = require('fs');
 
 let latestQR = null;
+
+// Persist contact names across restarts so /refresh-participants returns real names immediately
+const CONTACT_NAMES_FILE = path.join(__dirname, 'contact_names.json');
+let contactNames = {};
+try { contactNames = JSON.parse(fs.readFileSync(CONTACT_NAMES_FILE, 'utf8')); } catch (_) {}
+function saveContactNames() {
+  try { fs.writeFileSync(CONTACT_NAMES_FILE, JSON.stringify(contactNames)); } catch (_) {}
+}
 
 const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://localhost:8000';
 const PORT = parseInt(process.env.WHATSAPP_SERVICE_PORT || '3000');
@@ -40,6 +49,30 @@ async function connectToWhatsApp() {
   });
 
   sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('contacts.upsert', contacts => {
+    let changed = false;
+    for (const c of contacts) {
+      const name = c.name || c.notify;
+      if (c.id && name && contactNames[c.id] !== name) {
+        contactNames[c.id] = name;
+        changed = true;
+      }
+    }
+    if (changed) saveContactNames();
+  });
+
+  sock.ev.on('contacts.update', updates => {
+    let changed = false;
+    for (const u of updates) {
+      const name = u.name || u.notify;
+      if (u.id && name && contactNames[u.id] !== name) {
+        contactNames[u.id] = name;
+        changed = true;
+      }
+    }
+    if (changed) saveContactNames();
+  });
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
@@ -299,7 +332,7 @@ app.get('/group-participants', async (req, res) => {
     const meta = await sock.groupMetadata(group_id);
     const participants = meta.participants.map(p => ({
       jid: p.id,
-      name: p.notify || p.id.split('@')[0],
+      name: p.notify || contactNames[p.id] || p.id.split('@')[0],
     }));
     res.json({ participants });
   } catch (err) {
