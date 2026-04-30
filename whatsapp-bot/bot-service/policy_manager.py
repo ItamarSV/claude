@@ -90,9 +90,20 @@ def update_participant_name(group_id: str, jid: str, name: str):
 
 def set_participants(group_id: str, participants: list[dict]):
     data = _load()
-    if group_id in data:
-        data[group_id]["participants"] = participants
-        _save(data)
+    if group_id not in data:
+        return
+    existing = {p["jid"]: p["name"] for p in data[group_id].get("participants", [])}
+    merged = []
+    for p in participants:
+        existing_name = existing.get(p["jid"], "")
+        new_name = p["name"]
+        # Keep existing real name if the new one is just a raw LID number
+        if existing_name and not existing_name.isdigit() and new_name.isdigit():
+            merged.append({"jid": p["jid"], "name": existing_name})
+        else:
+            merged.append(p)
+    data[group_id]["participants"] = merged
+    _save(data)
 
 
 def get_participants(group_id: str) -> list[dict]:
