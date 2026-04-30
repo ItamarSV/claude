@@ -50,6 +50,26 @@ async function connectToWhatsApp() {
 
   sock.ev.on('creds.update', saveCreds);
 
+  sock.ev.on('messaging-history.set', ({ contacts = [], messages = [] }) => {
+    let changed = false;
+    for (const c of contacts) {
+      const name = c.name || c.notify;
+      if (c.id && name && contactNames[c.id] !== name) {
+        contactNames[c.id] = name;
+        changed = true;
+      }
+    }
+    for (const msg of messages) {
+      const jid = msg.key?.participant || msg.key?.remoteJid;
+      const name = msg.pushName;
+      if (jid && name && contactNames[jid] !== name) {
+        contactNames[jid] = name;
+        changed = true;
+      }
+    }
+    if (changed) saveContactNames();
+  });
+
   sock.ev.on('contacts.upsert', contacts => {
     let changed = false;
     for (const c of contacts) {

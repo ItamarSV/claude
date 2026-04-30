@@ -149,8 +149,9 @@ async def process_message(group_id: str, sender: str, text: str, sender_jid: str
     recent = read_recent_history(group_id, hours=2)
     extra = ""
     if participants:
-        names = ", ".join(p["name"] for p in participants)
-        extra += f"\nGroup members: {names}"
+        names = [p["name"] for p in participants if not p["name"].isdigit()]
+        if names:
+            extra += f"\nGroup members: {', '.join(names)}"
     if reminders_context:
         extra += f"\nPending reminders in this group:\n{reminders_context}"
     contents = (
